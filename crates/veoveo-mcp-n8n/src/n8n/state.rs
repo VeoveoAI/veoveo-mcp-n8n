@@ -1,8 +1,9 @@
 //! What the server keeps for n8n on the sandbox's persistent disk, under
 //! `/sandbox/state/n8n`: the API key the server minted, and n8n's own user folder. Nothing
 //! here outlives a new sandbox, so nothing here is needed to read n8n's data: n8n's
-//! encryption key lives in the database with that data, and the owner's password is new
-//! at every start. Each secret is a file of mode 0600 in a directory of mode 0700.
+//! encryption key lives in the database with that data, the server writes it into n8n's
+//! settings file before every start, and the owner's password is new at every start. Each
+//! secret is a file of mode 0600 in a directory of mode 0700.
 use std::{
     fs,
     io::{self, Write},
@@ -12,7 +13,6 @@ use std::{
 
 use secrecy::{ExposeSecret, SecretString};
 
-const ENCRYPTION_KEY: &str = "encryption-key";
 const API_KEY: &str = "api-key";
 const USER_FOLDER: &str = "home";
 const CREDENTIALS: &str = "credentials.json";
@@ -54,32 +54,41 @@ impl StateDirectory {
         self.root.join(CREDENTIALS)
     }
 
-    /// The encryption key this disk holds, which the server adopts when its database holds
-    /// none: the one an earlier version of the server kept here, or the one n8n wrote into
-    /// its own settings file, `.n8n/config` in its user folder, which n8n requires to match
-    /// the key it starts with.
-    pub fn kept_encryption_key(&self) -> io::Result<Option<SecretString>> {
-        if let Some(key) = read_optional(&self.root.join(ENCRYPTION_KEY))? {
-            let key = key.trim();
-            if !key.is_empty() {
-                return Ok(Some(SecretString::from(key.to_owned())));
-            }
-        }
-        let Some(settings) = read_optional(&self.n8n_settings_file())? else {
-            return Ok(None);
-        };
-        let settings: serde_json::Value = serde_json::from_str(&settings)
-            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-        Ok(settings
-            .get("encryptionKey")
-            .and_then(serde_json::Value::as_str)
-            .filter(|key| !key.is_empty())
-            .map(|key| SecretString::from(key.to_owned())))
-    }
-
     /// n8n's own settings file in its user folder.
     pub fn n8n_settings_file(&self) -> PathBuf {
         self.user_folder().join(".n8n").join("config")
+    }
+
+    /// Make n8n's settings file name `key`, the database's, before n8n starts: n8n refuses
+    /// to start when the file names another key than the one it is given, as a disk that
+    /// outlived a reset of n8n's data would. The file's other fields stay; a missing file
+    /// is created, readable by its user alone, as n8n requires.
+    pub fn align_n8n_settings(&self, key: &SecretString) -> io::Result<()> {
+        let folder = self.user_folder().join(".n8n");
+        fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(&folder)?;
+        let file = self.n8n_settings_file();
+        let mut settings = match read_optional(&file)? {
+            Some(text) => match serde_json::from_str(&text) {
+                Ok(serde_json::Value::Object(settings)) => settings,
+                _ => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!("{} is not n8n's settings object", file.display()),
+                    ));
+                }
+            },
+            None => serde_json::Map::new(),
+        };
+        settings.insert(
+            "encryptionKey".to_owned(),
+            serde_json::Value::String(key.expose_secret().to_owned()),
+        );
+        let text = serde_json::to_string_pretty(&serde_json::Value::Object(settings))
+            .map_err(io::Error::other)?;
+        write_private_at(&folder, "config", &text)
     }
 
     /// The API key the server minted, when it has one.
@@ -100,22 +109,28 @@ impl StateDirectory {
     /// Write `contents` to `name` with mode 0600, through a temporary file that replaces
     /// it in one rename.
     pub fn write_private(&self, name: &str, contents: &str) -> io::Result<()> {
-        let target = self.root.join(name);
-        let staged = self.root.join(format!(".{name}.new"));
-        match fs::remove_file(&staged) {
-            Ok(()) => {}
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-            Err(error) => return Err(error),
-        }
-        let mut file = fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(0o600)
-            .open(&staged)?;
-        file.write_all(contents.as_bytes())?;
-        file.sync_all()?;
-        fs::rename(&staged, &target)
+        write_private_at(&self.root, name, contents)
     }
+}
+
+/// Write `contents` to `name` in `folder` with mode 0600, through a temporary file that
+/// replaces it in one rename.
+fn write_private_at(folder: &Path, name: &str, contents: &str) -> io::Result<()> {
+    let target = folder.join(name);
+    let staged = folder.join(format!(".{name}.new"));
+    match fs::remove_file(&staged) {
+        Ok(()) => {}
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error),
+    }
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&staged)?;
+    file.write_all(contents.as_bytes())?;
+    file.sync_all()?;
+    fs::rename(&staged, &target)
 }
 
 fn read_optional(path: &Path) -> io::Result<Option<String>> {
@@ -141,7 +156,6 @@ mod tests {
     fn the_directory_and_its_secrets_are_private() {
         let directory = tempfile::tempdir().unwrap();
         let state = StateDirectory::prepare(directory.path().join("n8n")).unwrap();
-        assert!(state.kept_encryption_key().unwrap().is_none());
         state.keep_api_key(&SecretString::from("key")).unwrap();
         let mode = fs::metadata(state.root().join(API_KEY))
             .unwrap()
@@ -151,32 +165,50 @@ mod tests {
         let mode = fs::metadata(state.root()).unwrap().permissions().mode();
         assert_eq!(mode & 0o777, 0o700);
         assert!(state.user_folder().is_dir());
-        // n8n's settings file holds the key n8n started with, which the server adopts.
-        fs::create_dir_all(state.user_folder().join(".n8n")).unwrap();
+        assert_eq!(generate_secret().unwrap().expose_secret().len(), 64);
+    }
+
+    #[test]
+    fn n8n_s_settings_file_names_the_databases_key() {
+        let directory = tempfile::tempdir().unwrap();
+        let state = StateDirectory::prepare(directory.path().join("n8n")).unwrap();
+        let read = || -> serde_json::Value {
+            serde_json::from_str(&fs::read_to_string(state.n8n_settings_file()).unwrap()).unwrap()
+        };
+        // A missing file is created, readable by its user alone.
+        state
+            .align_n8n_settings(&SecretString::from("database-key"))
+            .unwrap();
+        assert_eq!(read(), serde_json::json!({"encryptionKey": "database-key"}));
+        let mode = fs::metadata(state.n8n_settings_file())
+            .unwrap()
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o777, 0o600);
+        // A stale key is replaced and n8n's other fields stay.
         fs::write(
             state.n8n_settings_file(),
-            r#"{"encryptionKey":"n8n-settings-key"}"#,
+            r#"{"encryptionKey":"stale-key","tunnelSubdomain":"x","fsStorageMigrated":true}"#,
         )
         .unwrap();
+        state
+            .align_n8n_settings(&SecretString::from("database-key"))
+            .unwrap();
         assert_eq!(
-            state
-                .kept_encryption_key()
-                .unwrap()
-                .unwrap()
-                .expose_secret(),
-            "n8n-settings-key"
+            read(),
+            serde_json::json!({
+                "encryptionKey": "database-key",
+                "tunnelSubdomain": "x",
+                "fsStorageMigrated": true
+            })
         );
-        // A key an earlier version kept on the disk comes first.
-        state.write_private(ENCRYPTION_KEY, "kept-key\n").unwrap();
-        assert_eq!(
+        // A file that is not n8n's settings object is refused, not overwritten.
+        fs::write(state.n8n_settings_file(), "[]").unwrap();
+        assert!(
             state
-                .kept_encryption_key()
-                .unwrap()
-                .unwrap()
-                .expose_secret(),
-            "kept-key"
+                .align_n8n_settings(&SecretString::from("database-key"))
+                .is_err()
         );
-        assert_eq!(generate_secret().unwrap().expose_secret().len(), 64);
     }
 
     #[test]

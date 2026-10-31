@@ -160,16 +160,17 @@ n8n's data, its tables in schema `n8n`, lives in the branch's data environment a
 outlives the sandbox: a push that changes `openshell/image/`, `openshell/policy.yaml` or
 `openshell/providers.yaml`, or a changed factory base, gives the branch a new sandbox
 with an empty disk over the same data. n8n's encryption key therefore lives with that
-data, in the server's table `n8n.instance_key`, created once and read at every start.
-When the table holds no key and the disk holds one, the one an earlier version of the
-server kept there or the one n8n wrote into its own settings file, which n8n requires to
-match the key it starts with, the server adopts it into the table; when neither holds one, it generates one, but only while
-n8n's tables do not exist yet. With n8n's tables and no key, the start fails and says
-that n8n's data cannot be read without its key, rather than let n8n fail on its own data.
-Every credential n8n holds is a provider's placeholder, so the key protects no real
-secret: it only lets n8n read its own data again. The key's row also names the n8n
-instance: a new row, with n8n's data started again over a reset schema, is a new
-instance, whose execution numbers start again at 1.
+data, in the server's table `n8n.instance_key`, the only source of the key: a kept row is
+used; with no row and none of n8n's tables, the server generates a key and keeps it; with
+n8n's tables and no row, the start fails and says that n8n's data cannot be read without
+its key, rather than let n8n fail on its own data. Before every start the server writes
+the key into n8n's settings file, `encryptionKey` in `.n8n/config` of n8n's user folder,
+keeping the file's other fields or creating it, because n8n refuses to start when that
+file names another key, as a disk that outlived a reset of n8n's data would. Every
+credential n8n holds is a provider's placeholder, so the key protects no real secret: it
+only lets n8n read its own data again. The key's row also names the n8n instance: a new
+row, with n8n's data started again over a reset schema, is a new instance, whose
+execution numbers start again at 1.
 
 What a new sandbox loses is only what the server makes again: the owner's password, new
 at every start, the API key, minted again, and n8n's user folder, which holds nothing n8n
@@ -474,7 +475,7 @@ a new sandbox.
 |---|---|
 | `src/contract` unit tests | Workflow names, execution IDs and typed addresses |
 | `src/instance`, `src/n8n`, `src/workflows` unit tests | The instance file's admission, n8n's environment, the generated secrets, the credential import document, the workflow write shape and webhook URLs, and each apply decision |
-| `tests/workflows.rs` | Against a real n8n on a migrated database: n8n migrates as the server's login, which may not create in the database, and its tables are prefixed and belong to the group role; the key is minted and kept, a credential imported; applying `workflows/` creates and publishes, keeps, updates, replaces an editor's version and archives by file name, records digests and versions, and the example's production webhook answers; a restart reads n8n's key from the database and reuses the API key; a new sandbox's empty disk starts with the key the database keeps, a new owner password and a newly minted API key; with n8n's data and no key the start is refused, and a key on the disk is adopted; the branch's workflows apply with the Veoveo nodes, `hello-run` runs as a Task to its Veoveo Result's output, and the editor serves n8n's pages and owner session through the proxy |
+| `tests/workflows.rs` | Against a real n8n on a migrated database: n8n migrates as the server's login, which may not create in the database, and its tables are prefixed and belong to the group role; the key is minted and kept, a credential imported; applying `workflows/` creates and publishes, keeps, updates, replaces an editor's version and archives by file name, records digests and versions, and the example's production webhook answers; a stale key in n8n's settings file over a fresh schema starts n8n with the database's key; a restart reads n8n's key from the database and reuses the API key; a new sandbox's empty disk starts with the key the database keeps, a new owner password and a newly minted API key; n8n's tables with no key refuse the start; the branch's workflows apply with the Veoveo nodes, `hello-run` runs as a Task to its Veoveo Result's output, and the editor serves n8n's pages and owner session through the proxy |
 | `tests/runs.rs` | Through the SDK's in-process mesh and a fake n8n: a run completes from its Veoveo Result, fails and is stopped from n8n's execution through the status check, is cancelled by its caller, which stops the execution, and a restarted worker keeps waiting on the recorded execution; a run's job names its n8n instance, so a new n8n's execution numbers never meet an earlier one's |
 | `tests/bridge.rs` | Only table tools and only a running run's token, for the run's caller through the mesh's exchange of the run's Task; a caller without the provider's permission gets the Hub's refusal |
 | `tests/containment.rs` | n8n listens on loopback only, reads no environment or outside file, loads no excluded node, and a credential-bound endpoint refuses a value that is not its placeholder |

@@ -13,9 +13,7 @@ use super::StoreError;
 pub enum KeyOrigin {
     /// The database kept it.
     Kept,
-    /// The sandbox's disk held it from an earlier version, and the database keeps it now.
-    Adopted,
-    /// n8n has no data yet, so the server generated it.
+    /// n8n has no data yet, so the server generated it and the database keeps it now.
     Generated,
 }
 
@@ -23,7 +21,7 @@ pub enum KeyOrigin {
 #[derive(Debug, thiserror::Error)]
 pub enum InstanceKeyError {
     #[error(
-        "n8n's data in schema n8n cannot be read without its encryption key, which neither the database nor the sandbox's disk holds; reset n8n's tables or restore the key"
+        "n8n's data in schema n8n cannot be read without its encryption key, which the database does not keep; reset n8n's tables"
     )]
     Lost,
     #[error(transparent)]
@@ -94,19 +92,15 @@ impl InstanceKeyStore {
         )
     }
 
-    /// The key n8n starts with: the one the database keeps; else the one an earlier
-    /// version kept on the sandbox's disk, `on_disk`, which the database keeps from then
-    /// on; else a new one, but only while n8n has no data a new key could not read.
+    /// The key n8n starts with: the one the database keeps, which is the only source of
+    /// n8n's key; else a new one, kept from then on, but only while n8n has no data a new
+    /// key could not read.
     pub async fn encryption_key(
         &self,
         tenant: TenantId,
-        on_disk: Option<SecretString>,
     ) -> Result<(InstanceKey, KeyOrigin), InstanceKeyError> {
         if let Some(key) = self.key(tenant).await? {
             return Ok((key, KeyOrigin::Kept));
-        }
-        if let Some(key) = on_disk {
-            return Ok((self.keep(tenant, &key).await?, KeyOrigin::Adopted));
         }
         if self.n8n_has_data().await? {
             return Err(InstanceKeyError::Lost);

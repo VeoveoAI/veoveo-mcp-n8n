@@ -170,7 +170,7 @@ async fn serve(
     // n8n's key lives with n8n's data, which outlives the sandbox's disk; the owner's
     // password is new at every start, and n8n applies it from the environment.
     let (key, origin) = InstanceKeyStore::new(store.clone())
-        .encryption_key(tenant, state.kept_encryption_key()?)
+        .encryption_key(tenant)
         .await?;
     tracing::info!(?origin, instance = %key.instance, "n8n's encryption key");
     let password = generate_secret()?;

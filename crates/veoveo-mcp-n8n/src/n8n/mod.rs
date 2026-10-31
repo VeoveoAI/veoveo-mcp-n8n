@@ -57,6 +57,10 @@ impl N8n {
         credentials: &[CredentialMapping],
         placeholder: impl Fn(&str) -> Option<String>,
     ) -> Result<Self> {
+        // n8n refuses a settings file that names another key; the database's is the key.
+        state
+            .align_n8n_settings(&encryption_key)
+            .context("making n8n's settings file name the database's key")?;
         let secrets = N8nSecrets::new(encryption_key, password)?;
         std::fs::create_dir_all(&settings.files)
             .with_context(|| format!("creating {}", settings.files.display()))?;

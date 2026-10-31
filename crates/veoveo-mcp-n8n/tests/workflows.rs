@@ -146,12 +146,20 @@ async fn n8n_runs_on_the_servers_login_and_applies_workflows_by_file_name() {
                 .unwrap(),
         };
 
-        // n8n's key lives in the database with its data: a new n8n's is generated.
+        // n8n's key lives in the database with its data: a new n8n's is generated. A disk
+        // that outlived a reset of n8n's data holds n8n's settings file with a stale key,
+        // which n8n would refuse; the server makes it name the database's key first.
         let keys = InstanceKeyStore::new(login.clone());
         let tenant =
             stored_tenant(&veoveo_types::TenantId::parse("tenant-a").unwrap()).unwrap();
-        let (instance_key, origin) = keys.encryption_key(tenant, None).await.unwrap();
+        let (instance_key, origin) = keys.encryption_key(tenant).await.unwrap();
         assert_eq!(origin, KeyOrigin::Generated);
+        std::fs::create_dir_all(state.user_folder().join(".n8n")).unwrap();
+        std::fs::write(
+            state.n8n_settings_file(),
+            r#"{"encryptionKey":"a-stale-key-of-n8n-s-earlier-data"}"#,
+        )
+        .unwrap();
         let started = tokio::time::Instant::now();
         let n8n = N8n::start(
             &settings,
@@ -164,6 +172,13 @@ async fn n8n_runs_on_the_servers_login_and_applies_workflows_by_file_name() {
         .await
         .unwrap();
         println!("n8n ready, keyed and credentialed in {:?}", started.elapsed());
+        let settings_file: Value =
+            serde_json::from_str(&std::fs::read_to_string(state.n8n_settings_file()).unwrap())
+                .unwrap();
+        assert_eq!(
+            settings_file["encryptionKey"],
+            instance_key.encryption_key.expose_secret()
+        );
         let key = state.api_key().unwrap().unwrap();
         assert!(!key.expose_secret().is_empty());
 
@@ -268,7 +283,7 @@ async fn n8n_runs_on_the_servers_login_and_applies_workflows_by_file_name() {
         // A restart reads n8n's key from the database, gives the owner a new password,
         // which n8n applies, reuses the kept API key and keeps what the branch's file
         // already applied.
-        let (kept, origin) = keys.encryption_key(tenant, None).await.unwrap();
+        let (kept, origin) = keys.encryption_key(tenant).await.unwrap();
         assert_eq!(origin, KeyOrigin::Kept);
         assert_eq!(kept.instance, instance_key.instance);
         let restarted = N8n::start(
@@ -304,7 +319,7 @@ async fn n8n_runs_on_the_servers_login_and_applies_workflows_by_file_name() {
         let state = StateDirectory::prepare(directory.path().join("new-sandbox/state/n8n")).unwrap();
         settings.user_folder = state.user_folder();
         assert!(state.api_key().unwrap().is_none());
-        let (kept, origin) = keys.encryption_key(tenant, state.kept_encryption_key().unwrap()).await.unwrap();
+        let (kept, origin) = keys.encryption_key(tenant).await.unwrap();
         assert_eq!(origin, KeyOrigin::Kept);
         let password = generate_secret().unwrap();
         let fresh = N8n::start(&settings, &state, kept.encryption_key, &password, &[], |_| None)
@@ -516,26 +531,19 @@ async fn n8n_runs_on_the_servers_login_and_applies_workflows_by_file_name() {
         drop(editor_hub);
         fresh.stop(STOP_GRACE).await;
 
-        // Without its key n8n's data cannot be read: with neither the database nor the
-        // disk holding one, the start refuses to make a new one. A key the disk holds is
-        // adopted.
+        // Without its key n8n's data cannot be read: with n8n's tables and no key in the
+        // database, the start refuses to make a new one.
         sqlx::query("DELETE FROM n8n.instance_key WHERE tenant = $1")
             .bind(tenant)
             .execute(login.pool())
             .await
             .unwrap();
-        let lost = keys.encryption_key(tenant, None).await.err().expect("a lost key");
-        assert!(lost.to_string().contains("cannot be read without its encryption key"), "{lost}");
-        // The key n8n wrote into its settings file on this disk is the one adopted.
-        let on_disk = state.kept_encryption_key().unwrap();
-        assert!(on_disk.is_some(), "n8n wrote no settings file");
-        let (adopted, origin) = keys.encryption_key(tenant, on_disk).await.unwrap();
-        assert_eq!(origin, KeyOrigin::Adopted);
-        assert_eq!(
-            adopted.encryption_key.expose_secret(),
-            instance_key.encryption_key.expose_secret()
+        let lost = keys.encryption_key(tenant).await.err().expect("a lost key");
+        assert!(
+            lost.to_string()
+                .contains("cannot be read without its encryption key"),
+            "{lost}"
         );
-        assert_ne!(adopted.instance, instance_key.instance, "an adopted key names a new instance");
     })
     .await
     .expect("the n8n test exceeded 600 seconds");
