@@ -1,0 +1,105 @@
+{
+  "name": "Slow Run",
+  "nodes": [
+    {
+      "id": "cac3a8fe-9edb-471e-bfce-0671adc4e053",
+      "name": "Veoveo Trigger",
+      "type": "CUSTOM.veoveoTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "a9d41cd4-f637-4ac9-90e0-b92595c7315f",
+      "parameters": {}
+    },
+    {
+      "id": "6f48b92d-f037-4309-8f2a-e78cb974bdfb",
+      "name": "Wait",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        220,
+        0
+      ],
+      "webhookId": "07743ade-bc7e-4971-9619-be4c3770a7b8",
+      "parameters": {
+        "amount": 90,
+        "unit": "seconds"
+      }
+    },
+    {
+      "id": "8ab5515e-7aee-4b66-9bb1-e6e3bd21d4e5",
+      "name": "Done",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        440,
+        0
+      ],
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "id": "5cd2b42f-2afc-4dbb-8ca1-617de3ff108e",
+              "name": "waited",
+              "value": "={{ 'Waited for ' + ($json.input.name || 'Veoveo') }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "577ff936-9cce-4603-999e-177489eb1601",
+      "name": "Veoveo Result",
+      "type": "CUSTOM.veoveoResult",
+      "typeVersion": 1,
+      "position": [
+        660,
+        0
+      ],
+      "parameters": {}
+    }
+  ],
+  "connections": {
+    "Veoveo Trigger": {
+      "main": [
+        [
+          {
+            "node": "Wait",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait": {
+      "main": [
+        [
+          {
+            "node": "Done",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Done": {
+      "main": [
+        [
+          {
+            "node": "Veoveo Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

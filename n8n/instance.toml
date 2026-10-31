@@ -12,6 +12,7 @@ nodes = [
   "n8n-nodes-base.manualTrigger",
   "n8n-nodes-base.set",
   "n8n-nodes-base.noOp",
+  "n8n-nodes-base.wait",
   "n8n-nodes-base.stickyNote",
 ]
 
