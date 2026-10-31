@@ -1,0 +1,38 @@
+{
+  "name": "Resolve Time",
+  "nodes": [
+    {
+      "id": "4f5a6b7c-8d9e-4f0a-9b1c-3d4e5f607182",
+      "name": "Veoveo Trigger",
+      "type": "CUSTOM.veoveoTrigger",
+      "typeVersion": 1,
+      "position": [0, 0],
+      "webhookId": "7f1e8d2b-3c4d-4e5f-9a0b-1c2d3e4f5a6b",
+      "parameters": {}
+    },
+    {
+      "id": "5a6b7c8d-9e0f-4a1b-8c2d-4e5f60718293",
+      "name": "Resolve",
+      "type": "CUSTOM.veoveoTool",
+      "typeVersion": 1,
+      "position": [220, 0],
+      "parameters": {
+        "tool": "time__resolve_time",
+        "arguments": "={{ { expression: { format: 'rfc3339', value: $json.input.at } } }}"
+      }
+    },
+    {
+      "id": "6b7c8d9e-0f1a-4b2c-9d3e-5f60718293a4",
+      "name": "Veoveo Result",
+      "type": "CUSTOM.veoveoResult",
+      "typeVersion": 1,
+      "position": [440, 0],
+      "parameters": {}
+    }
+  ],
+  "connections": {
+    "Veoveo Trigger": { "main": [[{ "node": "Resolve", "type": "main", "index": 0 }]] },
+    "Resolve": { "main": [[{ "node": "Veoveo Result", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" }
+}

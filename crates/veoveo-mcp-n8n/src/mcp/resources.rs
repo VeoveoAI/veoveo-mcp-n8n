@@ -3,8 +3,9 @@
 use super::{N8nMcp, n8n_error, policy, store_error};
 use crate::{
     contract::{
-        EditorView, N8nPermission, N8nResource, ReadEditor, ReadWorkflow, ReadWorkflows,
-        WorkflowSummary, WorkflowView, Workflows,
+        EditorView, ExecutionNumber, ExecutionView, Executions, N8nPermission, N8nResource,
+        ReadEditor, ReadExecution, ReadExecutions, ReadWorkflow, ReadWorkflows, WorkflowSummary,
+        WorkflowView, Workflows,
     },
     store::AppliedWorkflow,
     workflows::webhooks,
@@ -14,7 +15,7 @@ use veoveo_hub_sdk::{
     definition::ReadCollection,
     hosting::{ReadCache, ResourceBuilder, RoutesBuilder, hub_identity},
 };
-use veoveo_types::Page;
+use veoveo_types::{LiveKeyset, Page, Pager};
 
 pub(super) fn register(routes: RoutesBuilder<N8nMcp>) -> RoutesBuilder<N8nMcp> {
     routes
@@ -28,6 +29,22 @@ pub(super) fn register(routes: RoutesBuilder<N8nMcp>) -> RoutesBuilder<N8nMcp> {
             Some(ReadWorkflows),
             ResourceBuilder::new("The branch's workflows")
                 .reader(read_workflows)
+                .policy(policy(N8nPermission::WorkflowsRead))
+                .cache(ReadCache::NoStore),
+        )
+        .template::<ReadExecution, _, _>(
+            ResourceBuilder::new("Execution")
+                .reader(read_execution)
+                .policy(policy(N8nPermission::WorkflowsRead))
+                .cache(ReadCache::NoStore),
+        )
+        .collection_resource::<ReadExecutions, _, _>(
+            Some(ReadExecutions {
+                workflow: None,
+                status: None,
+            }),
+            ResourceBuilder::new("n8n's executions")
+                .reader(read_executions)
                 .policy(policy(N8nPermission::WorkflowsRead))
                 .cache(ReadCache::NoStore),
         )
@@ -114,4 +131,78 @@ async fn read_editor(
         editor_url: domain.served.editor_url.to_string(),
         hooks_url: domain.served.hooks_url.to_string(),
     })
+}
+
+async fn read_executions(
+    domain: N8nMcp,
+    read: ReadCollection<ReadExecutions>,
+    context: RequestContext<RoleServer>,
+) -> Result<Page<Executions>, McpError> {
+    let identity = hub_identity(&context)?;
+    let tenant = domain.tenant(&identity)?;
+    let request = read.selection();
+    let filters = request.filters().clone();
+    let pager = Pager::<Executions>::new(
+        tenant,
+        filters.clone(),
+        request.limit(),
+        LiveKeyset,
+        request.cursor(),
+    )
+    .map_err(|error| store_error(error.into()))?;
+    let workflow = match &filters.workflow {
+        Some(name) => match domain
+            .workflows
+            .workflow(tenant, name)
+            .await
+            .map_err(store_error)?
+        {
+            Some(applied) => Some(applied.n8n_id),
+            // A workflow the branch does not apply has no executions here.
+            None => {
+                return pager
+                    .finish(Vec::new())
+                    .map_err(|error| store_error(error.into()));
+            }
+        },
+        None => None,
+    };
+    let limit = u32::try_from(pager.fetch_limit()).unwrap_or(u32::MAX);
+    let page = domain
+        .n8n
+        .executions(
+            workflow.as_ref(),
+            filters.status,
+            limit,
+            pager.after().map(|after| after.0),
+            false,
+        )
+        .await
+        .map_err(n8n_error)?;
+    let mut items = Vec::with_capacity(page.executions.len());
+    for execution in page.executions {
+        if ExecutionNumber::of(&execution.id).is_none() {
+            continue;
+        }
+        items.push(super::tools::view(&domain, tenant, execution, false).await?);
+    }
+    pager
+        .finish(items)
+        .map_err(|error| store_error(error.into()))
+}
+
+async fn read_execution(
+    domain: N8nMcp,
+    read: ReadExecution,
+    context: RequestContext<RoleServer>,
+) -> Result<ExecutionView, McpError> {
+    let identity = hub_identity(&context)?;
+    let tenant = domain.tenant(&identity)?;
+    let execution = domain
+        .n8n
+        .execution(&read.execution, true)
+        .await
+        .map_err(n8n_error)?
+        .ok_or_else(|| McpError::invalid_params("no such execution", None))?;
+    super::tools::view(&domain, tenant, execution, true).await
 }

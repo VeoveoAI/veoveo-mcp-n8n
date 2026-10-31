@@ -69,6 +69,20 @@ pub(super) struct Args {
     /// The one folder workflows may read and write files in.
     #[arg(long, env = "VEOVEO_N8N_FILES", default_value = "/sandbox/n8n-files")]
     pub n8n_files: PathBuf,
+    /// The Veoveo nodes, which n8n loads through `N8N_CUSTOM_EXTENSIONS`.
+    #[arg(
+        long,
+        env = "VEOVEO_N8N_NODES",
+        default_value = "nodes/n8n-nodes-veoveo"
+    )]
+    pub n8n_nodes: PathBuf,
+    /// The document of the editor's App, `ui://n8n/editor`.
+    #[arg(
+        long,
+        env = "VEOVEO_N8N_EDITOR_APP",
+        default_value = "crates/veoveo-mcp-n8n/assets/editor.html"
+    )]
+    pub editor_app: PathBuf,
     /// n8n's command line program.
     #[arg(long, env = "VEOVEO_N8N_PROGRAM", default_value = "n8n")]
     pub n8n_program: PathBuf,

@@ -5,7 +5,7 @@ use std::{borrow::Cow, error::Error, fmt};
 
 use veoveo_types::{ResourceFieldCodec, ResourceRouteError, ResourceUriError, Vocabulary};
 
-use super::WorkflowName;
+use super::{ExecutionId, ExecutionStatus, WorkflowName};
 
 /// A resource address that failed admission.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -13,6 +13,8 @@ pub enum N8nResourceError {
     Uri(ResourceUriError),
     UnknownResource,
     InvalidWorkflow,
+    InvalidExecution,
+    InvalidStatus,
 }
 
 impl fmt::Display for N8nResourceError {
@@ -21,6 +23,8 @@ impl fmt::Display for N8nResourceError {
             Self::Uri(error) => error.fmt(f),
             Self::UnknownResource => f.write_str("unknown or noncanonical n8n resource address"),
             Self::InvalidWorkflow => f.write_str("invalid workflow name"),
+            Self::InvalidExecution => f.write_str("invalid execution ID"),
+            Self::InvalidStatus => f.write_str("invalid execution status"),
         }
     }
 }
@@ -65,6 +69,15 @@ pub enum N8nResource {
     Workflow(#[resource(variable = "workflow", codec = N8nFieldCodec)] WorkflowName),
     #[resource(template = "n8n://editor")]
     Editor,
+    #[resource(template = "n8n://executions{?workflow,status}")]
+    Executions {
+        #[resource(codec = N8nFieldCodec)]
+        workflow: Option<WorkflowName>,
+        #[resource(codec = N8nFieldCodec)]
+        status: Option<ExecutionStatus>,
+    },
+    #[resource(template = "n8n://execution/{execution_id}")]
+    Execution(#[resource(variable = "execution_id", codec = N8nFieldCodec)] ExecutionId),
 }
 
 fn route_error(error: ResourceRouteError) -> N8nResourceError {
@@ -92,6 +105,26 @@ impl ResourceFieldCodec<WorkflowName> for N8nFieldCodec {
         WorkflowName::parse(value).map_err(|_| N8nResourceError::InvalidWorkflow)
     }
     fn text(value: &WorkflowName) -> Cow<'_, str> {
+        value.as_str().into()
+    }
+}
+
+impl ResourceFieldCodec<ExecutionId> for N8nFieldCodec {
+    type Error = N8nResourceError;
+    fn parse(value: &str) -> Result<ExecutionId, Self::Error> {
+        ExecutionId::parse(value).map_err(|_| N8nResourceError::InvalidExecution)
+    }
+    fn text(value: &ExecutionId) -> Cow<'_, str> {
+        value.as_str().into()
+    }
+}
+
+impl ResourceFieldCodec<ExecutionStatus> for N8nFieldCodec {
+    type Error = N8nResourceError;
+    fn parse(value: &str) -> Result<ExecutionStatus, Self::Error> {
+        value.parse().map_err(|_| N8nResourceError::InvalidStatus)
+    }
+    fn text(value: &ExecutionStatus) -> Cow<'_, str> {
         value.as_str().into()
     }
 }
@@ -125,6 +158,10 @@ mod tests {
             "n8n://workflows",
             "n8n://workflow/hello-veoveo",
             "n8n://editor",
+            "n8n://executions",
+            "n8n://executions?workflow=hello-veoveo",
+            "n8n://executions?workflow=hello-veoveo&status=error",
+            "n8n://execution/42",
         ] {
             let address = parse(uri).unwrap_or_else(|error| panic!("{uri}: {error}"));
             assert_eq!(address.to_uri().unwrap().as_str(), uri);
@@ -146,6 +183,10 @@ mod tests {
             "n8n://workflows?unknown=1",
             "n8n://docs/unknown",
             "n8n://editor/extra",
+            "n8n://execution/abc",
+            "n8n://execution/042",
+            "n8n://executions?status=succeeded",
+            "n8n://executions?workflow=Bad",
             "n8n://other",
             "template://workflows",
         ] {

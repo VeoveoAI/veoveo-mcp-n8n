@@ -116,6 +116,8 @@ RUN useradd --system --uid 10001 --no-create-home "${COMPONENT}" \
 COPY --from=build "/home/sandbox/${COMPONENT}" "/usr/local/bin/${COMPONENT}"
 COPY workflows /opt/veoveo/n8n/workflows
 COPY n8n /opt/veoveo/n8n/n8n
+COPY nodes /opt/veoveo/n8n/nodes
+COPY crates/veoveo-mcp-n8n/assets /opt/veoveo/n8n/crates/veoveo-mcp-n8n/assets
 WORKDIR /opt/veoveo/n8n
 ENV VEOVEO_N8N_STATE=/var/lib/veoveo/n8n/state VEOVEO_N8N_FILES=/var/lib/veoveo/n8n/files
 USER ${COMPONENT}

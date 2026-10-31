@@ -15,6 +15,7 @@ tempfile = "=3.27.0"
 # veoveo-core, pinned to one revision for every core crate: the revision the SDK pins.
 veoveo-fixtures = { git = "https://github.com/VeoveoAI/veoveo-core", rev = "120306eb969c6134dadd422dca701a2ce63e9492" }
 veoveo-store = { git = "https://github.com/VeoveoAI/veoveo-core", rev = "120306eb969c6134dadd422dca701a2ce63e9492" }
+veoveo-task = { git = "https://github.com/VeoveoAI/veoveo-core", rev = "120306eb969c6134dadd422dca701a2ce63e9492" }
 veoveo-types = { git = "https://github.com/VeoveoAI/veoveo-core", rev = "120306eb969c6134dadd422dca701a2ce63e9492" }
 # The Rust SDK for Veoveo MCP servers: the contract feature for declarations, the server
 # feature for hosting, registration, the forwarded identity and the server's surfaces.
@@ -23,6 +24,8 @@ veoveo-hub-sdk = { git = "https://github.com/VeoveoAI/veoveo-hub-sdk", rev = "24
 anyhow = "=1.0.104"
 # The SDK's router; the server's own routes, such as the hooks, are axum routers.
 axum = "0.8.9"
+# n8n's executions cursor; the release veoveo-core pins.
+base64 = "=0.23.1"
 # n8n's owner password reaches n8n only as its bcrypt hash.
 bcrypt = "=0.19.3"
 clap = { version = "4.6.7", features = ["derive", "env"] }
@@ -49,6 +52,8 @@ serde_json = "=1.0.151"
 sqlx = { version = "=0.9.0", default-features = false, features = ["postgres", "runtime-tokio", "tls-rustls-ring-native-roots", "uuid", "chrono", "json", "migrate", "macros", "sqlx-toml"] }
 thiserror = "=2.0.21"
 tokio = "1.53.1"
+tokio-util = "0.7.19"
+futures = "0.3.34"
 uuid = { version = "1.24.1", default-features = false, features = ["serde", "std", "v7"] }
 
 [workspace.lints.rust]

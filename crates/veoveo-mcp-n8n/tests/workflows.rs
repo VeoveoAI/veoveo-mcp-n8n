@@ -2,25 +2,47 @@
 //! which has no CREATE privilege on the database, takes its API key, imports a
 //! credential, then applies `workflows/` by file name: creates and publishes, keeps,
 //! updates, replaces an editor's change and archives a removed file; after a restart it
-//! reuses its key. The n8n program is
-//! `VEOVEO_N8N_PROGRAM`, or `n8n` on `PATH`; the test also needs the PostgreSQL 18 server
-//! programs on `PATH` and port 5678 on loopback.
-use std::{collections::BTreeSet, path::PathBuf, time::Duration};
+//! reuses its key, applies the branch's own workflows with the Veoveo nodes, runs
+//! `hello-run` as an MCP Task through the SDK's in-process mesh, whose Veoveo Result
+//! completes it, and serves n8n's editor as its owner on the app origin. The n8n program
+//! is `VEOVEO_N8N_PROGRAM`, or `n8n` on `PATH`; the test also needs the PostgreSQL 18
+//! server programs on `PATH` and port 5678 on loopback. n8n reaches the server's loopback
+//! listener at `VEOVEO_N8N_TEST_LOOPBACK_HOST`, `127.0.0.1` unless n8n runs where the
+//! test's loopback is another host's, as in a container.
+use std::{collections::BTreeSet, path::PathBuf, sync::Arc, time::Duration};
 
+use axum::{
+    body::Body,
+    http::{Request, StatusCode},
+};
 use secrecy::ExposeSecret;
 use serde_json::{Value, json};
+use tokio_util::sync::CancellationToken;
+use tower::ServiceExt;
 use url::Url;
 use veoveo_fixtures::store::TestDb;
+use veoveo_hub_sdk::{
+    apps::AppHtml,
+    durable_tasks::DurableTasks,
+    hosting::{Hosted, testing},
+    registration::AppOrigin,
+};
 use veoveo_mcp_n8n::{
+    bridge::Bridge,
     contract::WorkflowName,
+    editor::{self, EditorSession},
     instance::Instance,
+    loopback,
+    mcp::{AUTHORIZATION, N8nMcp, Served},
     migrator,
-    n8n::{N8n, N8nDatabase, N8nSettings, STOP_GRACE, StateDirectory},
+    n8n::{N8n, N8nClient, N8nDatabase, N8nSettings, STOP_GRACE, StateDirectory},
+    runs::{N8nTasks, Runner},
     server,
-    store::{WorkflowStore, stored_tenant},
+    store::{RunStore, WorkflowStore, stored_tenant},
     workflows::{self, Decision, WorkflowFile},
 };
 use veoveo_store::ServerSchema;
+use veoveo_task::{Instance as ProcessInstance, TaskRuntime};
 
 const REPOSITORY: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../..");
 const CREDENTIAL: &str = "veoveoHeader001";
@@ -117,6 +139,10 @@ async fn n8n_runs_on_the_servers_login_and_applies_workflows_by_file_name() {
             )
             .unwrap(),
             nodes: instance.nodes.clone(),
+            veoveo_nodes: PathBuf::from(REPOSITORY)
+                .join("nodes/n8n-nodes-veoveo")
+                .canonicalize()
+                .unwrap(),
         };
 
         let started = tokio::time::Instant::now();
@@ -144,7 +170,7 @@ async fn n8n_runs_on_the_servers_login_and_applies_workflows_by_file_name() {
         .fetch_all(db.a.pool())
         .await
         .unwrap();
-        let own = BTreeSet::from(["_sqlx_migrations", "applied_workflow"]);
+        let own = BTreeSet::from(["_sqlx_migrations", "applied_workflow", "run"]);
         let n8n_tables: Vec<_> = tables
             .iter()
             .filter(|(table, _)| !own.contains(table.as_str()))
@@ -245,6 +271,202 @@ async fn n8n_runs_on_the_servers_login_and_applies_workflows_by_file_name() {
             .unwrap();
         assert_eq!(decided(&applied), ["keep"]);
         assert_eq!(call_hello().await["greeting"], "Hello from Veoveo");
+
+        // The branch's own workflows apply with the Veoveo nodes n8n loaded.
+        let branch = workflows::read_directory(&PathBuf::from(REPOSITORY).join("workflows")).unwrap();
+        let applied = workflows::apply(&client, &store, tenant, &branch).await.unwrap();
+        let decisions: BTreeSet<_> = applied
+            .iter()
+            .map(|decision| (decision.workflow().to_string(), decided(std::slice::from_ref(decision))[0]))
+            .collect();
+        assert!(decisions.contains(&("hello-run".to_owned(), "create")), "{decisions:?}");
+        assert!(decisions.contains(&("resolve-time".to_owned(), "create")), "{decisions:?}");
+        let hello_run = store.workflow(tenant, &name("hello-run")).await.unwrap().unwrap();
+        assert!(hello_run.runnable);
+        assert!(client.workflow(&hello_run.n8n_id).await.unwrap().unwrap().is_active());
+
+        // `run` as an MCP Task: the worker calls the Veoveo Trigger, n8n runs the
+        // workflow, and its Veoveo Result's callback completes the Task.
+        let tenant_id = veoveo_types::TenantId::parse("tenant-a").unwrap();
+        let mut mesh = testing::TestMesh::bind().await;
+        let calls = mesh.register(AUTHORIZATION.clone());
+        let routes_runtime = TaskRuntime::new(
+            login.clone(),
+            server(),
+            testing::deployment_id(),
+            Arc::new(ProcessInstance::start(&login, &server()).await.unwrap()),
+        );
+        let task_service = N8nTasks::new(routes_runtime, store.clone(), tenant_id.clone());
+        let served = Served {
+            tenant: tenant_id.clone(),
+            editor_url: Url::parse("https://n8n.apps.veoveo.test/").unwrap(),
+            hooks_url: settings.webhook_url.clone(),
+        };
+        let app = AppHtml::load(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/editor.html").as_ref()).unwrap();
+        let handler_store = store.clone();
+        let handler_client = client.clone();
+        mesh.serve(
+            testing::for_domain::<N8nMcp>()
+                .calls(calls.clone())
+                .handler(move || {
+                    Hosted::new(N8nMcp::new(
+                        handler_store.clone(),
+                        handler_client.clone(),
+                        served.clone(),
+                        app.clone(),
+                    ))
+                    .with_tasks(DurableTasks::tasks_only(task_service.clone()))
+                })
+                .build(),
+        );
+        let mesh = mesh
+            .granting([veoveo_mcp_n8n::contract::N8nPermission::WorkflowsRun.name()])
+            .start();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let loopback_host = std::env::var("VEOVEO_N8N_TEST_LOOPBACK_HOST")
+            .unwrap_or_else(|_| "127.0.0.1".to_owned());
+        let loopback_base = Url::parse(&format!(
+            "http://{loopback_host}:{}/",
+            listener.local_addr().unwrap().port()
+        ))
+        .unwrap();
+        let worker_runtime = TaskRuntime::new(
+            login.clone(),
+            server(),
+            testing::deployment_id(),
+            Arc::new(ProcessInstance::start(&login, &server()).await.unwrap()),
+        );
+        let runs = RunStore::new(login.clone());
+        let stop = CancellationToken::new();
+        let runner = Runner {
+            runtime: worker_runtime.clone(),
+            workflows: store.clone(),
+            runs: runs.clone(),
+            n8n: client.clone(),
+            tenant,
+            loopback: loopback_base,
+        };
+        let working = tokio::spawn(runner.work(Some(calls.clone()), stop.clone()));
+        let serving = tokio::spawn(loopback::serve_on(
+            listener,
+            loopback::router(
+                worker_runtime.clone(),
+                Bridge::new(worker_runtime.clone(), runs, tenant, Some(calls)),
+            ),
+            {
+                let stop = stop.clone();
+                async move { stop.cancelled().await }
+            },
+        ));
+        let started_run = tokio::time::Instant::now();
+        let started = mesh
+            .start_task("n8n", "run", json!({"workflow": "hello-run", "input": {"name": "Ada"}}))
+            .await;
+        let task = started["result"]["taskId"]
+            .as_str()
+            .or_else(|| started["result"]["task"]["taskId"].as_str())
+            .unwrap_or_else(|| panic!("no Task started: {started}"))
+            .to_owned();
+        let task_id = veoveo_types::TaskId::parse(&task).unwrap();
+        let completed = tokio::time::timeout(Duration::from_secs(60), async {
+            loop {
+                let snapshot = worker_runtime.get(task_id).await.unwrap().unwrap();
+                if snapshot.is_terminal() {
+                    return snapshot;
+                }
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+        })
+        .await
+        .expect("the run never ended");
+        println!("the run ended {:?} in {:?}", completed.status, started_run.elapsed());
+        let result = completed.result.clone().unwrap_or_else(|| panic!("no result: {completed:?}"));
+        assert_eq!(
+            result["structuredContent"]["output"],
+            json!([{"greeting": "Hello, Ada"}]),
+            "{result}"
+        );
+        let execution = result["structuredContent"]["execution"].as_str().unwrap().to_owned();
+        let execution = client
+            .execution(&veoveo_mcp_n8n::contract::ExecutionId::parse(execution).unwrap(), true)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(execution.status.as_str(), "success");
+        stop.cancel();
+        let _ = working.await;
+        let _ = serving.await;
+
+        // The editor on the app origin acts as n8n's owner: the person's request reaches
+        // n8n with the owner's session, which the server signed in for, and the answer
+        // sets no cookie and refuses no frame.
+        let app_host = "n8n.apps.veoveo.test";
+        let session = Arc::new(EditorSession::new(
+            N8nClient::new(N8nSettings::base_url()).unwrap(),
+            state.owner_password().unwrap(),
+        ));
+        let editor_hub = testing::TestHub::new(
+            testing::for_domain::<N8nMcp>()
+                .handler({
+                    let store = store.clone();
+                    let client = client.clone();
+                    let served = Served {
+                        tenant: tenant_id.clone(),
+                        editor_url: Url::parse("https://n8n.apps.veoveo.test/").unwrap(),
+                        hooks_url: settings.webhook_url.clone(),
+                    };
+                    let app = AppHtml::load(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/editor.html").as_ref()).unwrap();
+                    move || Hosted::new(N8nMcp::new(store.clone(), client.clone(), served.clone(), app.clone()))
+                })
+                .authenticated_routes(editor::router(N8nSettings::base_url(), session, Some(app_host.to_owned())))
+                .app_origin(Some(AppOrigin::parse(&format!("https://{app_host}")).unwrap()))
+                .build(),
+        )
+        .granting([veoveo_mcp_n8n::contract::N8nPermission::Editor.name()]);
+        let token = editor_hub.token();
+        let editor_router = testing::for_domain::<N8nMcp>()
+            .handler({
+                let store = store.clone();
+                let client = client.clone();
+                let served = Served {
+                    tenant: tenant_id.clone(),
+                    editor_url: Url::parse("https://n8n.apps.veoveo.test/").unwrap(),
+                    hooks_url: settings.webhook_url.clone(),
+                };
+                let app = AppHtml::load(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/editor.html").as_ref()).unwrap();
+                move || Hosted::new(N8nMcp::new(store.clone(), client.clone(), served.clone(), app.clone()))
+            })
+            .authenticated_routes(editor::router(
+                N8nSettings::base_url(),
+                Arc::new(EditorSession::new(
+                    N8nClient::new(N8nSettings::base_url()).unwrap(),
+                    state.owner_password().unwrap(),
+                )),
+                Some(app_host.to_owned()),
+            ))
+            .app_origin(Some(AppOrigin::parse(&format!("https://{app_host}")).unwrap()))
+            .build()
+            .into_router();
+        let on_app = |path: &str| {
+            Request::builder()
+                .uri(path)
+                .header("host", app_host)
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap()
+        };
+        let me = editor_router.clone().oneshot(on_app("/rest/login")).await.unwrap();
+        assert_eq!(me.status(), StatusCode::OK);
+        assert!(me.headers().get("set-cookie").is_none());
+        let me: Value = serde_json::from_slice(&axum::body::to_bytes(me.into_body(), 1 << 20).await.unwrap()).unwrap();
+        assert_eq!(me["data"]["email"], veoveo_mcp_n8n::n8n::OWNER_EMAIL, "{me}");
+        let page = editor_router.clone().oneshot(on_app("/")).await.unwrap();
+        assert_eq!(page.status(), StatusCode::OK);
+        assert!(page.headers().get("x-frame-options").is_none());
+        let html = axum::body::to_bytes(page.into_body(), 8 << 20).await.unwrap();
+        assert!(String::from_utf8_lossy(&html).contains("<html"), "the editor page is not HTML");
+        drop(editor_hub);
+
         restarted.stop(STOP_GRACE).await;
     })
     .await

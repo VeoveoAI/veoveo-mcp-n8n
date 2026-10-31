@@ -3752,9 +3752,11 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "axum",
+ "base64 0.23.1",
  "bcrypt",
  "clap",
  "dotenvy",
+ "futures",
  "getrandom 0.4.3",
  "hex",
  "nix",
@@ -3770,13 +3772,16 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.21",
  "tokio",
+ "tokio-util",
  "toml 1.1.8+spec-1.1.0",
+ "tower",
  "tracing",
  "url",
  "uuid",
  "veoveo-fixtures",
  "veoveo-hub-sdk",
  "veoveo-store",
+ "veoveo-task",
  "veoveo-types",
 ]
 

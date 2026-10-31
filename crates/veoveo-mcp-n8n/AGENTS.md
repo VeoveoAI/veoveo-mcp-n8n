@@ -31,11 +31,14 @@ nothing except through OpenShell's proxy or through the server and the Hub.
 
 - `cargo test -p veoveo-mcp-n8n` with PostgreSQL 18 and the pinned n8n on `PATH`, as the
   `dev` image provides them. `tests/workflows.rs` starts the n8n program that
-  `VEOVEO_N8N_PROGRAM` names, or `n8n`, and needs port 5678 on loopback.
+  `VEOVEO_N8N_PROGRAM` names, or `n8n`, and needs port 5678 on loopback; n8n reaches the
+  test's loopback listener at `VEOVEO_N8N_TEST_LOOPBACK_HOST`, `127.0.0.1` unless n8n runs
+  in a container. `tests/runs.rs`, `tests/bridge.rs` and `tests/mcp.rs` use the fake n8n
+  in `tests/support`.
 - `cargo test -p veoveo-mcp-n8n --no-default-features --features contract` checks the
   contract alone.
-- Every statement is a `.sql` file under `src/store/workflows/` run through sqlx's checked
-  macros. Regenerate `.sqlx` after changing a query or a migration.
+- Every statement is a `.sql` file under `src/store/workflows/` or `src/store/runs/` run
+  through sqlx's checked macros. Regenerate `.sqlx` after changing a query or a migration.
 - `docker build --target check .` runs the gate. Its `N8N_IMAGE` names the fork's image by
   digest in the installation's registry; a host that reaches that registry under another
   address passes the same digest there.

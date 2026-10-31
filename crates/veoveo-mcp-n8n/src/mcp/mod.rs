@@ -1,37 +1,42 @@
-//! One typed route table binds reads, discovery, current permissions and the server's
-//! surfaces: the hooks, a public route prefix, and n8n's editor on the app origin.
+//! One typed route table binds tools, reads, the editor's App, discovery, current
+//! permissions and the server's surfaces: the hooks, a public route prefix, and n8n's
+//! editor on the app origin. The App's frame domain is the app origin the registration
+//! names, so the serving table is installed once the server registered; the declaration
+//! the registration carries is the same with or without it.
+mod app;
 mod declarations;
 mod requirements;
 mod resources;
 mod setup;
+mod tools;
 
-use std::sync::LazyLock;
+use std::sync::{LazyLock, OnceLock};
 
-use axum::{Router, http::StatusCode, routing::any};
 use rmcp::ErrorData as McpError;
 use url::Url;
 use veoveo_hub_sdk::{
     HubInternalIdentity,
+    apps::AppHtml,
     hosting::{DomainServer, RoutePolicy, Routes},
+    registration::AppOrigin,
     server_contract::McpServerSetup,
 };
 
 use crate::{
+    bridge::BridgeTool,
     contract::N8nPermission,
+    hooks,
     n8n::{N8nClient, N8nError},
     store::{StoreError, WorkflowStore, stored_tenant},
 };
 
+pub use app::{EDITOR_APP_URI, editor_app};
 pub use declarations::{REGISTRATION, registration};
 pub use requirements::AUTHORIZATION;
 pub use setup::N8nContract;
 use setup::SERVER_SETUP;
 
-/// The hooks' prefix under the mount, with its body limit and rate.
-pub const HOOKS_PATH: &str = "hooks/";
-pub const HOOKS_MAX_BODY_BYTES: u64 = 1024 * 1024;
-pub const HOOKS_REQUESTS_PER_MINUTE: u32 = 600;
-
+/// Check the server's MCP setup. The serving routes must be installed first.
 pub fn force_setup() {
     LazyLock::force(&SERVER_SETUP);
 }
@@ -51,14 +56,16 @@ pub struct N8nMcp {
     workflows: WorkflowStore,
     n8n: N8nClient,
     served: Served,
+    app: AppHtml,
 }
 
 impl N8nMcp {
-    pub fn new(workflows: WorkflowStore, n8n: N8nClient, served: Served) -> Self {
+    pub fn new(workflows: WorkflowStore, n8n: N8nClient, served: Served, app: AppHtml) -> Self {
         Self {
             workflows,
             n8n,
             served,
+            app,
         }
     }
 
@@ -81,12 +88,34 @@ fn policy(permission: N8nPermission) -> RoutePolicy {
     RoutePolicy::permission(permission).expect("n8n permission")
 }
 
-static ROUTES: LazyLock<Routes<N8nMcp>> = LazyLock::new(|| {
-    let routes = Routes::<N8nMcp>::builder(policy(N8nPermission::WorkflowsRead))
-        .public_route(HOOKS_PATH, HOOKS_MAX_BODY_BYTES, HOOKS_REQUESTS_PER_MINUTE)
+/// The route table. `editor_origin` is the app origin the editor's App frames; the
+/// table declares the same surfaces and authorization without it.
+pub fn routes_for(editor_origin: Option<&AppOrigin>) -> Routes<N8nMcp> {
+    let mut routes = Routes::<N8nMcp>::builder(policy(N8nPermission::WorkflowsRead))
+        .public_route(
+            hooks::PATH,
+            hooks::MAX_BODY_BYTES,
+            hooks::REQUESTS_PER_MINUTE,
+        )
         .app_origin(policy(N8nPermission::Editor));
-    resources::register(routes).build()
-});
+    for tool in BridgeTool::ALL {
+        routes = routes.uses(tool.permission());
+    }
+    let routes = tools::register(routes);
+    let routes = resources::register(routes);
+    app::register(routes, editor_origin).build()
+}
+
+/// The serving routes, with the editor's frame domain once the server registered.
+static ROUTES: OnceLock<Routes<N8nMcp>> = OnceLock::new();
+
+/// Install the serving routes for the registration's app origin, before the setup is
+/// built. Fails when routes were already in use.
+pub fn install_routes(editor_origin: &AppOrigin) -> anyhow::Result<()> {
+    ROUTES
+        .set(routes_for(Some(editor_origin)))
+        .map_err(|_| anyhow::anyhow!("the routes were installed twice"))
+}
 
 impl DomainServer for N8nMcp {
     type Contract = N8nContract;
@@ -94,36 +123,8 @@ impl DomainServer for N8nMcp {
         &SERVER_SETUP
     }
     fn routes() -> &'static Routes<Self> {
-        &ROUTES
+        ROUTES.get_or_init(|| routes_for(None))
     }
-}
-
-/// The hooks under `/n8n/hooks/`. Deliveries to n8n's webhook listener are not served
-/// yet, so every delivery is answered 503.
-pub fn hooks() -> Router {
-    Router::new().route(
-        "/hooks/{*path}",
-        any(|| async {
-            (
-                StatusCode::SERVICE_UNAVAILABLE,
-                "this server does not deliver webhooks to n8n yet",
-            )
-        }),
-    )
-}
-
-/// The authenticated routes the app origin serves at its root. n8n's editor is not
-/// forwarded yet, so its root answers 503 to a person the Hub admitted.
-pub fn editor() -> Router {
-    Router::new().route(
-        "/",
-        any(|| async {
-            (
-                StatusCode::SERVICE_UNAVAILABLE,
-                "this server does not serve n8n's editor yet",
-            )
-        }),
-    )
 }
 
 fn store_error(error: StoreError) -> McpError {

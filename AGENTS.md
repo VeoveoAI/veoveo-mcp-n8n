@@ -14,8 +14,9 @@ own rules are in [`crates/veoveo-mcp-n8n/AGENTS.md`](crates/veoveo-mcp-n8n/AGENT
   Adapt it through its documented environment, its public API and its custom-node
   extension point; a change n8n itself needs goes to the fork, recorded in its
   `VEOVEO_FORK.md`.
-- The Veoveo nodes under `nodes/` are TypeScript because n8n's extension point is. Keep
-  them thin: they reach the server on loopback and hold no logic the server owns.
+- The Veoveo nodes under `nodes/` are plain JavaScript that n8n loads from
+  `N8N_CUSTOM_EXTENSIONS` without a build. Keep them thin: they reach the server on
+  loopback and hold no logic the server owns.
 - Never put a credential value in `workflows/`, `n8n/` or the image. Name a provider's
   environment variable instead.
 - Commits carry no AI or tool attribution.

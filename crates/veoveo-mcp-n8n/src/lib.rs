@@ -6,11 +6,23 @@
 pub mod contract;
 
 #[cfg(feature = "server")]
+pub mod bridge;
+#[cfg(feature = "server")]
+pub mod editor;
+#[cfg(feature = "server")]
+pub mod hooks;
+#[cfg(feature = "server")]
 pub mod instance;
+#[cfg(feature = "server")]
+pub mod loopback;
 #[cfg(feature = "server")]
 pub mod mcp;
 #[cfg(feature = "server")]
 pub mod n8n;
+#[cfg(feature = "server")]
+pub mod proxy;
+#[cfg(feature = "server")]
+pub mod runs;
 #[cfg(feature = "server")]
 pub mod server;
 #[cfg(feature = "server")]

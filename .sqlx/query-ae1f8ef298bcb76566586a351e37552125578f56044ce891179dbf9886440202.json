@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "-- Forget a run whose Task ended.\nDELETE FROM n8n.run\nWHERE tenant = $1 AND task_id = $2\n",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "ae1f8ef298bcb76566586a351e37552125578f56044ce891179dbf9886440202"
+}

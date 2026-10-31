@@ -7,6 +7,13 @@ use url::Url;
 
 use crate::instance::{EXCLUDED_NODES, NodeType};
 
+/// The Veoveo nodes' types, which every instance loads.
+pub const VEOVEO_NODES: &[&str] = &[
+    super::VEOVEO_TRIGGER,
+    super::VEOVEO_RESULT,
+    super::VEOVEO_TOOL,
+];
+
 /// n8n's loopback listener. Only processes in the sandbox reach it.
 pub const LISTEN_ADDRESS: &str = "127.0.0.1";
 pub const PORT: u16 = 5678;
@@ -101,6 +108,8 @@ pub struct N8nSettings {
     pub webhook_url: Url,
     /// The node types the instance admits.
     pub nodes: Vec<NodeType>,
+    /// The Veoveo nodes' folder, `N8N_CUSTOM_EXTENSIONS`.
+    pub veoveo_nodes: PathBuf,
 }
 
 /// The secrets the environment carries, kept under the state directory.
@@ -177,7 +186,16 @@ impl N8nSettings {
             ),
             (
                 "NODES_INCLUDE",
-                json_list(self.nodes.iter().map(NodeType::as_str)),
+                json_list(
+                    self.nodes
+                        .iter()
+                        .map(NodeType::as_str)
+                        .chain(VEOVEO_NODES.iter().copied()),
+                ),
+            ),
+            (
+                "N8N_CUSTOM_EXTENSIONS",
+                self.veoveo_nodes.display().to_string(),
             ),
             ("NODES_EXCLUDE", json_list(EXCLUDED_NODES.iter().copied())),
             ("N8N_MCP_MANAGED_BY_ENV", "true".to_owned()),
@@ -253,6 +271,7 @@ mod tests {
                 NodeType::parse("n8n-nodes-base.webhook").unwrap(),
                 NodeType::parse("n8n-nodes-base.set").unwrap(),
             ],
+            veoveo_nodes: "/sandbox/src/nodes/n8n-nodes-veoveo".into(),
         })
     }
 
@@ -307,7 +326,11 @@ mod tests {
             ("N8N_USER_FOLDER", "/sandbox/state/n8n/home"),
             (
                 "NODES_INCLUDE",
-                r#"["n8n-nodes-base.webhook","n8n-nodes-base.set"]"#,
+                r#"["n8n-nodes-base.webhook","n8n-nodes-base.set","CUSTOM.veoveoTrigger","CUSTOM.veoveoResult","CUSTOM.veoveoTool"]"#,
+            ),
+            (
+                "N8N_CUSTOM_EXTENSIONS",
+                "/sandbox/src/nodes/n8n-nodes-veoveo",
             ),
             ("N8N_MCP_MANAGED_BY_ENV", "true"),
             ("N8N_MCP_ACCESS_ENABLED", "false"),

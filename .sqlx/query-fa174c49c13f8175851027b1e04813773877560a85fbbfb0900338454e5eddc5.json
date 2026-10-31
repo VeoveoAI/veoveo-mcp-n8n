@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "-- Record the execution n8n's trigger started for a run.\nUPDATE n8n.run\nSET execution_id = $3\nWHERE tenant = $1 AND task_id = $2\n",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "fa174c49c13f8175851027b1e04813773877560a85fbbfb0900338454e5eddc5"
+}

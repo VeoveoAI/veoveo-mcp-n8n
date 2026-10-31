@@ -1,0 +1,18 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "-- Record a run's dispatch before the server calls n8n's trigger. A dispatch of the same\n-- Task again, after an earlier one reached no execution, replaces its token.\nINSERT INTO n8n.run (tenant, task_id, workflow, operation_id, token_sha256, execution_id, started_at)\nVALUES ($1, $2, $3, $4, $5, NULL, now())\nON CONFLICT (tenant, task_id) DO UPDATE SET\n    workflow = EXCLUDED.workflow,\n    operation_id = EXCLUDED.operation_id,\n    token_sha256 = EXCLUDED.token_sha256,\n    execution_id = NULL,\n    started_at = EXCLUDED.started_at\n",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Text",
+        "Uuid",
+        "Bytea"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "52d40a3b5f345e2d18ec42917bb94c5b04d697b7a554885f6e824f03d95ea537"
+}

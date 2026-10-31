@@ -107,8 +107,36 @@ impl N8nWorkflow {
     }
 }
 
-/// The owner's n8n session, for the first-start API-key mint only.
+/// The owner's n8n session: its `n8n-auth` cookie's value, a JWT.
 pub struct OwnerSession(SecretString);
+
+impl OwnerSession {
+    /// A session from an `n8n-auth` cookie's value.
+    pub fn from_cookie(value: impl Into<String>) -> Self {
+        Self(SecretString::from(value.into()))
+    }
+
+    /// The `n8n-auth` cookie's value.
+    pub fn cookie(&self) -> &SecretString {
+        &self.0
+    }
+
+    /// When the session expires, in seconds since the Unix epoch: its JWT's `exp`.
+    pub fn expires_at(&self) -> Option<u64> {
+        use base64::Engine;
+        let payload = self.0.expose_secret().split('.').nth(1)?;
+        let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .decode(payload.trim_end_matches('='))
+            .ok()?;
+        serde_json::from_slice::<serde_json::Value>(&bytes)
+            .ok()?
+            .get("exp")?
+            .as_u64()
+    }
+}
+
+/// The name of n8n's session cookie.
+pub const SESSION_COOKIE_NAME: &str = SESSION_COOKIE;
 
 #[derive(Deserialize)]
 struct Data<T> {
@@ -129,7 +157,7 @@ struct Message {
 /// n8n's loopback HTTP surface.
 #[derive(Clone)]
 pub struct N8nClient {
-    http: reqwest::Client,
+    pub(super) http: reqwest::Client,
     base: Url,
     api_key: Option<std::sync::Arc<SecretString>>,
 }
@@ -162,7 +190,7 @@ impl N8nClient {
         &self.base
     }
 
-    fn url(&self, path: &str) -> Url {
+    pub(super) fn url(&self, path: &str) -> Url {
         self.base.join(path).expect("a relative n8n path")
     }
 
@@ -308,7 +336,7 @@ impl N8nClient {
         .await
     }
 
-    async fn call<T: DeserializeOwned>(
+    pub(super) async fn call<T: DeserializeOwned>(
         &self,
         method: Method,
         path: &str,
@@ -318,7 +346,7 @@ impl N8nClient {
         parse(path, refuse_failure(method, path, response).await?).await
     }
 
-    async fn api(
+    pub(super) async fn api(
         &self,
         method: Method,
         path: &str,
@@ -342,7 +370,7 @@ impl N8nClient {
     }
 }
 
-async fn refuse_failure(
+pub(super) async fn refuse_failure(
     method: Method,
     path: &str,
     response: reqwest::Response,
@@ -364,7 +392,7 @@ async fn refuse_failure(
     })
 }
 
-async fn parse<T: DeserializeOwned>(
+pub(super) async fn parse<T: DeserializeOwned>(
     path: &str,
     response: reqwest::Response,
 ) -> Result<T, N8nError> {

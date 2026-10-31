@@ -4,6 +4,7 @@
 mod client;
 mod credentials;
 mod environment;
+mod executions;
 mod state;
 
 use std::{process::ExitStatus, time::Duration};
@@ -12,11 +13,17 @@ use anyhow::{Context, Result, bail};
 use secrecy::SecretString;
 use tokio::process::Child;
 
-pub use client::{API_KEY_LABEL, API_KEY_SCOPES, N8nClient, N8nError, N8nWorkflow, N8nWorkflowId};
+pub use client::{
+    API_KEY_LABEL, API_KEY_SCOPES, N8nClient, N8nError, N8nWorkflow, N8nWorkflowId, OwnerSession,
+    SESSION_COOKIE_NAME,
+};
 pub use credentials::import_document;
 pub use environment::{
     DatabaseTls, LISTEN_ADDRESS, N8nDatabase, N8nSecrets, N8nSettings, OWNER_EMAIL, PORT,
     TABLE_PREFIX, WITHHELD_PREFIXES,
+};
+pub use executions::{
+    DISPATCH_HEADER, ExecutionsPage, N8nExecution, VEOVEO_RESULT, VEOVEO_TOOL, VEOVEO_TRIGGER,
 };
 pub use state::{StateDirectory, generate_secret};
 

@@ -1,0 +1,16 @@
+{
+  "name": "n8n-nodes-veoveo",
+  "version": "0.1.0",
+  "description": "The Veoveo nodes: Veoveo Trigger, Veoveo Result and Veoveo Tool. n8n loads them from N8N_CUSTOM_EXTENSIONS as plain JavaScript, with no build step.",
+  "license": "Apache-2.0",
+  "private": true,
+  "n8n": {
+    "n8nNodesApiVersion": 1,
+    "nodes": [
+      "nodes/VeoveoTrigger/VeoveoTrigger.node.js",
+      "nodes/VeoveoResult/VeoveoResult.node.js",
+      "nodes/VeoveoTool/VeoveoTool.node.js"
+    ],
+    "credentials": []
+  }
+}

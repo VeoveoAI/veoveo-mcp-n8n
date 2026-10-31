@@ -10,11 +10,10 @@ use url::Url;
 
 use crate::{
     contract::{FileDigest, WebhookView, WorkflowName},
+    n8n::VEOVEO_TRIGGER,
     store::MAX_WORKFLOWS,
 };
 
-/// The node type of the Veoveo Trigger, with which a runnable workflow starts.
-pub const VEOVEO_TRIGGER: &str = "n8n-nodes-veoveo.veoveoTrigger";
 /// The node type of n8n's Webhook trigger.
 const WEBHOOK: &str = "n8n-nodes-base.webhook";
 /// The largest workflow file the server reads.
@@ -167,6 +166,19 @@ fn write_shape(workflow: &WorkflowName, exported: Map<String, Value>) -> Result<
     Ok(Value::Object(body))
 }
 
+/// The members of n8n's `document` of a workflow that a workflow file holds, in the form
+/// the server applies: what a person's agent writes to the file.
+pub fn file_members(document: &Value) -> Value {
+    let members = document
+        .as_object()
+        .into_iter()
+        .flatten()
+        .filter(|(member, _)| WRITTEN.contains(&member.as_str()))
+        .map(|(member, value)| (member.clone(), value.clone()))
+        .collect();
+    Value::Object(members)
+}
+
 fn nodes(body: &Value) -> impl Iterator<Item = &Map<String, Value>> {
     body.get("nodes")
         .and_then(Value::as_array)
@@ -254,7 +266,7 @@ mod tests {
         // A file without a name or settings takes its file's name and empty settings.
         let bare = WorkflowFile::parse(
             name("bare"),
-            br#"{"nodes": [{"name": "Start", "type": "n8n-nodes-veoveo.veoveoTrigger"}], "connections": {}}"#,
+            br#"{"nodes": [{"name": "Start", "type": "CUSTOM.veoveoTrigger"}], "connections": {}}"#,
         )
         .unwrap();
         assert_eq!(bare.body["name"], "bare");

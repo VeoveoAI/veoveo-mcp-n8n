@@ -1,21 +1,34 @@
 //! Registration with the Hub: the server's key, its declarations, and the client that
 //! resumes its native saved registration across process restarts.
 use anyhow::{Context, Result};
-use veoveo_hub_sdk::registration::{
-    ClientMetadata, RegistrationDeclaration,
-    client::{KeyDirectory, Registration, RegistrationClient},
+use veoveo_hub_sdk::{
+    hosting::ServerCalls,
+    registration::{
+        ClientMetadata, RegistrationDeclaration,
+        client::{KeyDirectory, Registration, RegistrationClient},
+    },
 };
 
 use super::config::Args;
 use crate::mcp::AUTHORIZATION;
 
-/// Resume or initially register the server. Returns the lifecycle client, the
-/// registration, and the HTTP client that reached the Hub, which also fetches the
-/// Hub's token keys when a forwarded token names a key the registration lacks.
+/// What registering gave the server.
+pub(super) struct Registered {
+    /// The lifecycle client that keeps the registration.
+    pub client: RegistrationClient,
+    pub registration: Registration,
+    /// The HTTP client that reached the Hub, which also fetches the Hub's token keys when
+    /// a forwarded token names a key the registration lacks.
+    pub http: reqwest::Client,
+    /// The server's calls to other servers: the bridge's, for a run's caller.
+    pub calls: ServerCalls,
+}
+
+/// Resume or initially register the server.
 pub(super) async fn register(
     args: &Args,
     declaration: RegistrationDeclaration,
-) -> Result<(RegistrationClient, Registration, reqwest::Client)> {
+) -> Result<Registered> {
     let keys = KeyDirectory::new(&args.key_directory);
     let metadata = prepare(args, declaration)?;
     let key = keys
@@ -39,14 +52,25 @@ pub(super) async fn register(
             .clone()
             .context("serving requires initial registration admission")?,
         key,
-        metadata,
+        metadata.clone(),
     )?;
     let registration = client
         .resume_or_register(&keys)
         .await
         .context("registering the server with the Hub")?;
     tracing::info!(client_id = %registration.client_id(), "registered with the Hub");
-    Ok((client, registration, http))
+    let key = keys
+        .load_or_generate()
+        .context("loading the server's registration key")?;
+    let calls = ServerCalls::discover(&registration, &metadata, &key, http.clone())
+        .await
+        .context("discovering the Hub's token endpoint for calls to other servers")?;
+    Ok(Registered {
+        client,
+        registration,
+        http,
+        calls,
+    })
 }
 
 /// Identical metadata construction for offline admission and actual serving.

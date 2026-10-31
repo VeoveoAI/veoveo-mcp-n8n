@@ -1,7 +1,11 @@
 //! The server's own tables in the `n8n` schema: what it applied from the branch's
-//! `workflows/` for its tenant. Each statement is a `.sql` file under `workflows/`, run
-//! through sqlx's checked `query_file*!` macros. n8n's own `n8n_*` tables share the
+//! `workflows/` for its tenant, and the runs it dispatched. Each statement is a `.sql`
+//! file under `workflows/` or `runs/`, run through sqlx's checked `query_file*!` macros. n8n's own `n8n_*` tables share the
 //! schema; no statement here names them.
+mod runs;
+
+pub use runs::{Run, RunStore};
+
 use crate::{
     contract::{FileDigest, WorkflowName, Workflows},
     n8n::N8nWorkflowId,
@@ -151,6 +155,24 @@ impl WorkflowStore {
             "src/store/workflows/workflow.sql",
             tenant as TenantId,
             workflow.as_str(),
+        )
+        .fetch_optional(self.store.pool())
+        .await?
+        .map(AppliedWorkflow::try_from)
+        .transpose()
+    }
+
+    /// `tenant`'s applied workflow that n8n knows as `n8n_id`.
+    pub async fn by_n8n_id(
+        &self,
+        tenant: TenantId,
+        n8n_id: &N8nWorkflowId,
+    ) -> Result<Option<AppliedWorkflow>, StoreError> {
+        sqlx::query_file_as!(
+            AppliedRow,
+            "src/store/workflows/workflow_by_n8n_id.sql",
+            tenant as TenantId,
+            n8n_id.as_str(),
         )
         .fetch_optional(self.store.pool())
         .await?

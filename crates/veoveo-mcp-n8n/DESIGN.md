@@ -28,6 +28,7 @@ liveness     /livez
 readiness    /readyz
 port         8811
 n8n          127.0.0.1:5678, inside the sandbox only
+loopback     127.0.0.1:8812, the Veoveo nodes' run callbacks and the bridge
 ```
 
 MCP and the hooks are under the server's mount, through the SDK's existing route kinds:
@@ -68,7 +69,7 @@ The server answers these questions for a caller:
 
 | Surface | Name | Permission | Result |
 |---|---|---|---|
-| Tool | `run` | `n8n.workflows.run` | A Task whose result is the execution's output and its address |
+| Tool | `run` | `n8n.workflows.run` | A Task whose result is the execution, its address and the JSON of the items it produced |
 | Tool | `retry_execution`, `stop_execution` | `n8n.executions.write` | The execution |
 | Tool | `editor_changes` | `n8n.workflows.read` | Each workflow whose n8n version differs from the branch's file, with its JSON |
 | Resource | `n8n://workflows{?limit,cursor}` | `n8n.workflows.read` | A page of workflows: name, whether it is runnable and active, the applied file digest |
@@ -77,14 +78,16 @@ The server answers these questions for a caller:
 | Resource | `n8n://executions{?workflow,status,limit,cursor}` | `n8n.workflows.read` | A page of executions |
 | Resource | `n8n://execution/{execution_id}` | `n8n.workflows.read` | One execution: status, timing, output or error |
 | App | `ui://n8n/workflow`, `ui://n8n/executions` | `n8n.workflows.read` | Interactive views of the two resources |
-| App | `ui://n8n/editor` | `n8n.editor` | n8n's editor, framed from the server's app origin through the spec's `csp.frameDomains`; it asks the host for `fullscreen` |
+| App | `ui://n8n/editor` | `n8n.editor` | n8n's editor: a view that reads `n8n://editor` and frames the editor from the server's app origin, the one origin its `csp.frameDomains` names; it asks the host for `fullscreen` |
 | Resource | `n8n://docs`, `n8n://docs/{doc_id}`, `n8n://contract` | `n8n.workflows.read` | The embedded documents and the contract declaration |
 
 A workflow is named by its file under `workflows/`, such as `invoice-intake` for
 `workflows/invoice-intake.json`, never by n8n's internal ID: lowercase ASCII letters and
 digits in groups joined by single hyphens, at most 64 characters, so its order is the same
-in Rust and in PostgreSQL's `C` collation. It is runnable when it starts with the Veoveo
-Trigger node, `n8n-nodes-veoveo.veoveoTrigger`. `n8n.workflows.run` and `n8n.editor` declare the
+in Rust and in PostgreSQL's `C` collation. It is runnable when it starts with an enabled
+Veoveo Trigger node with a webhook ID, `CUSTOM.veoveoTrigger`: n8n names a node it loads
+from `N8N_CUSTOM_EXTENSIONS` under the package `CUSTOM`. The Veoveo Result and Veoveo
+Tool are `CUSTOM.veoveoResult` and `CUSTOM.veoveoTool`. `n8n.workflows.run` and `n8n.editor` declare the
 risk `sensitive`: a workflow acts on outside services with the installation's
 credentials, and the editor changes what workflows do.
 
@@ -109,10 +112,12 @@ and a caller of another tenant is refused.
 | `mcp` | The typed ready routes, resource readers, apps, setup and the registration declaration |
 | `n8n` | n8n's child process, its environment, its loopback REST client and its first-start bootstrap |
 | `workflows` | Reading `workflows/`, applying it to n8n and recording what is applied |
-| `runs` | The Task worker: the dispatch to n8n, the wait and the result |
+| `runs` | The Task service of `run`, the worker: the dispatch to n8n, the wait and the result, and n8n's status check and cancellation |
 | `bridge` | Calls from n8n's Veoveo Tool node into other servers |
+| `loopback` | The server's loopback listener, where the Veoveo Result posts a run's output and the Veoveo Tool calls the bridge |
 | `editor` | The editor on the app origin: the owner's n8n session attached to each forwarded request, and the record of who made it |
 | `hooks` | Public webhook deliveries to n8n's webhook listener |
+| `proxy` | Forwarding a delivered request to n8n's listener, for the hooks and the editor |
 | `store` | The server's own tables in the `n8n` schema |
 | `server` | Configuration, registration with the Hub, the database login, the process instance and serving |
 
@@ -121,7 +126,7 @@ and a caller of another tenant is refused.
 | Path | Holds |
 |---|---|
 | `crates/veoveo-mcp-n8n/` | The server, its migrations, tests and the documents it serves |
-| `nodes/n8n-nodes-veoveo/` | n8n custom nodes in TypeScript: Veoveo Trigger, Veoveo Result and Veoveo Tool. TypeScript is used here because n8n's extension point is |
+| `nodes/n8n-nodes-veoveo/` | n8n custom nodes in plain JavaScript, in n8n's community-node layout: Veoveo Trigger, Veoveo Result and Veoveo Tool. n8n loads them from `N8N_CUSTOM_EXTENSIONS` with no build step, since the factory image has Node.js but no compiler for TypeScript |
 | `workflows/` | The branch's workflows, one JSON file each |
 | `n8n/instance.toml` | The instance's tenant, the credential map from n8n credential types to provider placeholders, and the node and credential types the instance admits, as [the instance](#the-instance) describes |
 | `openshell/image/`, `openshell/run`, `openshell/policy.yaml` | The [factory layout](#factory) |
@@ -143,7 +148,8 @@ the branch's data environment holds an n8n other than the one the sandbox's disk
 server logs in as the owner at `/rest/login`, mints a new key at `/rest/api-keys` with the
 scopes it uses and keeps it. It imports the instance's credentials with
 `n8n import:credentials`, applies the branch's workflows through `/api/v1` and serves;
-`/readyz` answers only from then on.
+`/readyz` answers only from then on. Beside MCP it runs the Task worker of `run` and the
+loopback listener of the Veoveo nodes.
 
 If n8n exits, the server exits, and OpenShell restarts the workload; the server never
 restarts n8n itself. SIGTERM stops claiming runs, lets running dispatches settle for up
@@ -165,7 +171,7 @@ template.
 | `N8N_ENCRYPTION_KEY` | Generated on first start, kept under `/sandbox/state/n8n` | n8n encrypts its credentials, which hold only placeholders |
 | `N8N_BLOCK_ENV_ACCESS_IN_NODE`, `N8N_BLOCK_FILE_ACCESS_TO_N8N_FILES`, `N8N_RESTRICT_FILE_ACCESS_TO` | `true`, `true`, `/sandbox/n8n-files` | Workflows read no environment and no file outside one folder |
 | `NODES_INCLUDE`, `NODES_EXCLUDE` | The node types `n8n/instance.toml` admits, and n8n's command, SSH, Git, local-file and MCP nodes | n8n loads only the admitted node types, and never the excluded ones, which an instance cannot admit. No node runs commands, reaches past the policy's rules or speaks MCP |
-| `N8N_CUSTOM_EXTENSIONS` | The built `nodes/n8n-nodes-veoveo` | The Veoveo nodes |
+| `N8N_CUSTOM_EXTENSIONS` | The checkout's `nodes/n8n-nodes-veoveo` | The Veoveo nodes, which `NODES_INCLUDE` always admits |
 | `N8N_MCP_MANAGED_BY_ENV`, `N8N_MCP_ACCESS_ENABLED` | `true`, `false` | n8n's own MCP server stays off |
 | `N8N_COMMUNITY_PACKAGES_ENABLED`, `N8N_DIAGNOSTICS_ENABLED`, `N8N_VERSION_NOTIFICATIONS_ENABLED`, `N8N_TEMPLATES_ENABLED` | `false` | n8n installs and fetches nothing on its own |
 
@@ -233,13 +239,20 @@ providers' environment names, never values.
 
 ### Calls Into Veoveo
 
-The Veoveo Tool node posts a tool name, its arguments and its run's token to the server
-on loopback. The bridge admits a call only for a tool in its typed bridge table, each
-entry the provider's `ToolCall` with its permission in the server's `uses`, and only with
-the token of a running run. It calls through `ServerCalls::for_task` for that run's Task:
-the Hub exchanges the Task for a token that acts for the run's caller and carries the
-permissions the server declared and the caller holds at that moment. An execution that
-a webhook or n8n's own schedule started belongs to no run and calls into no server.
+The Veoveo Tool node posts a tool name, its arguments and its run's token to the bridge
+on the server's loopback listener, `/n8n/bridge/calls`. The bridge admits a call only for
+a tool in its typed bridge table and only with the token of a run whose Task has not
+ended. Each entry names the provider's tool by its Hub name, such as
+`time__resolve_time`, and the provider permission it is called with, which the server
+declares in its `uses`; the arguments are n8n's JSON, which the provider checks against
+its own schema. An entry names the tool rather than taking the provider's `ToolCall`
+because the providers' contract features pin other SDK revisions than this server's. The
+bridge calls through `ServerCalls::for_task` for that run's Task: the Hub exchanges the
+Task for a token that acts for the run's caller and carries the permissions the server
+declared and the caller holds at that moment. A tool outside the table and a token of no
+running run are refused with 403; a refusal of the Hub or the provider is the tool's
+error result. An execution that a webhook or n8n's own schedule started belongs to no
+run and calls into no server.
 
 ### Models
 
@@ -248,18 +261,46 @@ provider's placeholder. The Hub is not a model proxy.
 
 ## Runs
 
-`run` creates a Task for its caller. The worker dispatches an operation to n8n: it calls
-the workflow's Veoveo Trigger on loopback with the operation ID, a fresh run token and
-the input, and the trigger answers at once with n8n's execution ID, which the dispatch
-step records. The Task then waits. The workflow's Veoveo Result node posts the output to
-the operation callback route on loopback, signed with the instance's callback key, or a
-status check reads the execution through n8n's API.
+`run` creates a durable Task for its caller, of the branch's tenant and for a workflow the
+branch applied that starts with the Veoveo Trigger; a call without the client's Task
+support is told it needs it. The worker dispatches one operation to n8n, with the
+operation ID as its idempotency key. It records the run with the SHA-256 of a fresh run
+token, then calls the workflow's Veoveo Trigger on loopback, n8n's production webhook
+`{webhookId}/run`, with the header `x-veoveo-dispatch: run`, which the hooks never
+forward, and a body naming the operation ID, the run token, the operation's callback URL,
+the bridge's URL and the input. The trigger answers at once with n8n's execution ID, as
+n8n's `onReceived` response mode lets a webhook answer with `$execution.id`, and the
+dispatch records it as the operation's job. The Task then parks.
 
-A finished execution completes the Task with its output. A failed one fails it with
-n8n's error, and a stopped one ends it as cancelled. Cancelling the Task stops the
-execution. Binary output goes to Artifact for the caller through Artifact's signed URLs.
-A restarted worker finds the recorded execution and keeps waiting on it instead of
-starting the workflow again.
+The Veoveo Result node posts the JSON of the items it receives to the callback URL on the
+server's loopback listener, `/n8n/operations/{operation_id}/{token}`: the operation's
+callback token, which only that execution's data holds, authenticates it, and the server
+stores it as the operation's final event. Every operation is also checked: the first
+status check two seconds after the dispatch, each interval 1.2 times the one before, at
+most 60 within the run's deadline of 24 hours, through n8n's public API. A run without a
+callback, such as one dispatched again, completes from the checks.
+
+| n8n's execution | The Task |
+|---|---|
+| `success` | Completes with the execution, its address and the items of the Veoveo Result, or of the last node when none ran |
+| `error`, `crashed` | Fails with `execution_failed` and n8n's error |
+| `canceled` by someone in n8n | Fails with `execution_stopped`: the Task runtime ends a Task as cancelled only after its caller asked |
+| Running past the deadline | The server stops the execution and fails the Task with `run_deadline_passed` |
+
+Cancelling the Task stops the execution, and n8n's answer is the cancellation's receipt.
+A restarted worker finds the recorded operation and keeps waiting on its execution
+instead of starting the workflow again; a dispatch that recorded no execution looks for
+the execution whose Veoveo Trigger emitted its operation ID before it calls the trigger
+again. The worker deletes the run's row when the Task ends. Binary output goes to
+Artifact for the caller through Artifact's signed URLs.
+
+`retry_execution` and `stop_execution` act on n8n's executions through its public API,
+`editor_changes` returns each workflow whose n8n version differs from the one the server
+applied, with n8n's copy in the members a workflow file holds, and
+`n8n://executions{?workflow,status,limit,cursor}` pages n8n's executions newest first.
+The listing's cursor is the server's, bound to its filters and limit; a next page asks n8n
+for the executions after the cursor's, in n8n's own cursor form, and n8n lists a running
+execution only when the status filter asks for `running`.
 
 ## Workflows From Lore
 
@@ -297,24 +338,40 @@ versions, and the server logs each one it replaced.
 
 ## Editor
 
-The editor is the app `ui://n8n/editor`, which frames the server's
-`authenticated_routes` from the server's app origin. The Hub serves that origin: it
-signs a person in, checks `n8n.editor` and forwards the browser to the selected
-instance through OpenShell with a forwarded token; the browser chooses no target. The
-app origin is n8n's alone, so n8n's script reaches neither the Hub's origin, nor the
-sandbox origin of self-contained apps, nor another server's app. Editor requests act in
-n8n as its owner: the server attaches the owner's n8n
-session to each forwarded request and strips n8n's cookies from the answers, so the
-browser never holds an n8n credential. The server records which person made each
-editor request. Strict binding keeps any value typed into a credential from leaving the
-sandbox.
+The editor is the app `ui://n8n/editor`, a view that reads `n8n://editor` and frames the
+server's `authenticated_routes` from the server's app origin. The App's UI metadata names
+the registration's `veoveo_app_origin` as its one frame domain, so the server installs its
+serving routes once it registered; the declaration it registers is the same with or
+without the origin. The Hub serves that origin: it signs a person in, checks `n8n.editor`
+and forwards the browser to the selected instance through OpenShell with a forwarded
+token, with `Host` the app origin's host and without its own cookies; the browser chooses
+no target. The app origin is n8n's alone, so n8n's script reaches neither the Hub's
+origin, nor the sandbox origin of self-contained apps, nor another server's app.
+
+The editor's routes forward every path of the app origin to n8n's listener on loopback,
+streaming both bodies, so the editor's pages, `/rest`, its assets and its server-sent
+events reach n8n; a request for another host, such as the mount on the deployment's host,
+is not the editor's. The server checks `n8n.editor` again on each request. Editor
+requests act in n8n as its owner: the server signs in as the owner with the password it
+keeps, holds the session itself, renews it from n8n's answers and signs in again an hour
+before it expires or after n8n refused it, and attaches it to each forwarded request in
+place of any n8n session the browser sent. It removes the Hub's forwarded token, strips
+n8n's cookies from the answers, so the browser never holds an n8n credential, and strips
+n8n's `X-Frame-Options: SAMEORIGIN`, which would refuse the App's frame. The server
+records the person behind each request that changes n8n, by the forwarded identity.
+Strict binding keeps any value typed into a credential from leaving the sandbox.
 
 ## Webhooks
 
 The hooks are the server's `public_routes` under `/n8n/hooks/{path}`, with size and rate
-limits. The Hub routes a delivery for the branch to its instance through OpenShell. The
-server records the delivery and passes the path after `/n8n/hooks/` to the root of n8n's
-listener on loopback, where n8n serves `webhook/{path}`. The
+limits. The Hub routes a delivery for the branch to its instance through OpenShell, with
+`Host` the public base's host and without cookies. The server passes the path after
+`/n8n/hooks/` to the root of n8n's listener on loopback only when it names one of n8n's
+webhook or form endpoints, `webhook/`, `webhook-test/`, `webhook-waiting/`, `form/`,
+`form-test/` or `form-waiting/`, where n8n serves `webhook/{path}`; n8n's REST and public
+API are never reached. It forwards the body, at most 1 MiB, the query and the sender's
+headers without the server's own `x-veoveo-` headers or cookies, so no delivery starts a
+run, strips cookies from n8n's answer and records the delivery and n8n's status. The
 webhook's own signature, which n8n's trigger node checks, verifies the sender. n8n
 registers its trigger URLs with outside services itself, under `N8N_WEBHOOK_URL`, through
 the integration's provider.
@@ -337,10 +394,11 @@ its owner. The server relies on them as follows.
 | Table | Key | Retention |
 |---|---|---|
 | `n8n.applied_workflow` | `(tenant, workflow)` | While the workflow's file exists on the branch |
-| `n8n.run` | `(tenant, task_id)` | As long as the run's Task |
+| `n8n.run` | `(tenant, task_id)` | While the run's Task runs; the worker deletes it when the Task ends |
 | `n8n.n8n_*` | n8n's own | n8n's; the server's statements never touch these tables |
 
-A run records its workflow, n8n's execution ID and the SHA-256 of its run token. Each of
+A run records its workflow, its operation, n8n's execution ID and the SHA-256 of its run
+token, by which the bridge finds it; its row lasts while its Task runs. Each of
 the server's statements binds the tenant and follows the template's
 [persistence](https://github.com/VeoveoAI/veoveo-template-mcp-rust/blob/main/crates/veoveo-template-mcp-rust/DESIGN.md#persistence)
 rules. n8n's tables are upstream's, created and changed only by n8n's migrations.
@@ -355,14 +413,16 @@ rules. n8n's tables are upstream's, created and changed only by n8n's migrations
 | `n8n.webhook_delivery` | HTTP Activity (4002) | Each public delivery and n8n's answer |
 | `n8n.editor_request` | API Activity (6003) | Each editor request that changes n8n, with the person who made it |
 
-The usage kind `n8n.execution` counts executions in `Units`.
+The usage kind `n8n.execution` counts executions in `Units`. Until the server writes
+these records through core's audit and usage ledger, each class is a structured log line
+that names its class, and no usage is recorded.
 
 ## Factory
 
 | Path | Holds |
 |---|---|
 | `openshell/image/` | The template's Rust image, `rust:1.99.0-trixie` by digest, with Node.js and n8n copied from the VeoveoAI fork's image, built at its pinned revision on `node:26.12.1-trixie-slim` into the installation's registry and named by digest. Both are Debian trixie, so `node`, n8n's native modules and the installation's Lore command line link against one glibc |
-| `openshell/run` | Builds the server and the Veoveo nodes, then `exec`s the server |
+| `openshell/run` | Builds the server, then `exec`s it; the Veoveo nodes need no build |
 | `openshell/policy.yaml` | The rule `n8n_database`, which admits n8n's program, `/usr/local/bin/node`, to the PostgreSQL host and port of the installation's base rule, and the integration hosts n8n's program reaches, by exact host |
 | `openshell/providers.yaml` | `vv-factory-model` and the integration profiles the workflows use |
 
@@ -379,9 +439,9 @@ a new sandbox.
 |---|---|
 | `src/contract` unit tests | Workflow names, execution IDs and typed addresses |
 | `src/instance`, `src/n8n`, `src/workflows` unit tests | The instance file's admission, n8n's environment, the generated secrets, the credential import document, the workflow write shape and webhook URLs, and each apply decision |
-| `tests/workflows.rs` | Against a real n8n on a migrated database: n8n migrates as the server's login, which may not create in the database, and its tables are prefixed and belong to the group role; the key is minted and kept, a credential imported; applying `workflows/` creates and publishes, keeps, updates, replaces an editor's version and archives by file name, records digests and versions, and the example's production webhook answers; a restart reuses the key |
-| `tests/runs.rs` | A run completes, fails and is cancelled; a restarted worker keeps waiting on the recorded execution |
-| `tests/bridge.rs` | Only table tools and only a running run's token, through the test Hub's exchange |
+| `tests/workflows.rs` | Against a real n8n on a migrated database: n8n migrates as the server's login, which may not create in the database, and its tables are prefixed and belong to the group role; the key is minted and kept, a credential imported; applying `workflows/` creates and publishes, keeps, updates, replaces an editor's version and archives by file name, records digests and versions, and the example's production webhook answers; a restart reuses the key; the branch's workflows apply with the Veoveo nodes, `hello-run` runs as a Task to its Veoveo Result's output, and the editor serves n8n's pages and owner session through the proxy |
+| `tests/runs.rs` | Through the SDK's in-process mesh and a fake n8n: a run completes from its Veoveo Result, fails and is stopped from n8n's execution through the status check, is cancelled by its caller, which stops the execution, and a restarted worker keeps waiting on the recorded execution |
+| `tests/bridge.rs` | Only table tools and only a running run's token, for the run's caller through the mesh's exchange of the run's Task; a caller without the provider's permission gets the Hub's refusal |
 | `tests/containment.rs` | n8n listens on loopback only, reads no environment or outside file, loads no excluded node, and a credential-bound endpoint refuses a value that is not its placeholder |
-| `tests/mcp.rs` | Discovery, permission refusals and the refusal of another tenant through the SDK's test Hub |
+| `tests/mcp.rs` | Discovery, permission refusals, the refusal of another tenant, the workflows, executions and editor resources and the editor's App through the SDK's test Hub; the hooks reach only n8n's webhooks without the server's headers, and the editor acts as n8n's owner on the app origin alone, against a fake n8n |
 | `tests/database_conformance.rs`, `tests/sql_confinement.rs` | The template's checks over the server's own tables |

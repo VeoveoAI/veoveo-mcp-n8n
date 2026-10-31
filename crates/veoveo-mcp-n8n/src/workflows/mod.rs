@@ -10,7 +10,7 @@ use std::collections::BTreeMap;
 use anyhow::{Context, Result};
 use veoveo_store::TenantId;
 
-pub use files::{VEOVEO_TRIGGER, WorkflowFile, read_directory, webhooks};
+pub use files::{WorkflowFile, file_members, read_directory, webhooks};
 pub use plan::{Decision, Recorded, plan};
 
 use crate::{
