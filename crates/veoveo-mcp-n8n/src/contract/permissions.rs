@@ -22,7 +22,7 @@ pub enum N8nScope {
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Vocabulary)]
 pub enum N8nPermission {
-    /// Read the branch's workflows, their executions and the server's documents.
+    /// Read the team's workflows, their executions and the server's documents.
     #[vocabulary(rename = "n8n.workflows.read")]
     WorkflowsRead,
     /// Run a workflow: it acts on outside services with the installation's credentials.
@@ -31,9 +31,6 @@ pub enum N8nPermission {
     /// Retry or stop an execution.
     #[vocabulary(rename = "n8n.executions.write")]
     ExecutionsWrite,
-    /// Use n8n's editor, which changes what workflows do.
-    #[vocabulary(rename = "n8n.editor")]
-    Editor,
 }
 
 impl N8nPermission {
@@ -46,7 +43,7 @@ impl N8nPermission {
 impl PermissionDefinition for N8nPermission {
     fn resource(self) -> &'static str {
         match self {
-            Self::WorkflowsRead | Self::WorkflowsRun | Self::Editor => "n8n.workflow",
+            Self::WorkflowsRead | Self::WorkflowsRun => "n8n.workflow",
             Self::ExecutionsWrite => "n8n.execution",
         }
     }
@@ -54,13 +51,13 @@ impl PermissionDefinition for N8nPermission {
     fn access(self) -> Access {
         match self {
             Self::WorkflowsRead => Access::Read,
-            Self::WorkflowsRun | Self::ExecutionsWrite | Self::Editor => Access::Write,
+            Self::WorkflowsRun | Self::ExecutionsWrite => Access::Write,
         }
     }
 
     fn risks(self) -> &'static [Risk] {
         match self {
-            Self::WorkflowsRun | Self::Editor => &[Risk::Sensitive],
+            Self::WorkflowsRun => &[Risk::Sensitive],
             Self::WorkflowsRead | Self::ExecutionsWrite => &[],
         }
     }
@@ -82,9 +79,8 @@ mod tests {
     }
 
     #[test]
-    fn running_and_editing_are_sensitive() {
+    fn running_is_sensitive() {
         assert_eq!(N8nPermission::WorkflowsRun.risks(), &[Risk::Sensitive]);
-        assert_eq!(N8nPermission::Editor.risks(), &[Risk::Sensitive]);
         assert!(N8nPermission::WorkflowsRead.risks().is_empty());
         assert_eq!(N8nPermission::WorkflowsRead.access(), Access::Read);
     }

@@ -16,8 +16,7 @@ use super::{N8nMcp, setup::N8nContract};
 pub static REGISTRATION: OnceLock<RegistrationDeclaration> = OnceLock::new();
 
 /// The server's identity, the URL where the Hub reaches its MCP endpoint,
-/// `{public_base_url}/n8n/mcp`, and the surfaces its routes declare: the hooks and the
-/// app origin.
+/// `{public_base_url}/n8n/mcp`, and the surface its routes declare: the hooks.
 pub fn registration(
     deployment: &PublicDeployment,
     deployment_id: veoveo_hub_sdk::DeploymentId,
@@ -39,7 +38,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_registration_declares_the_mcp_url_the_hooks_and_the_app_origin() {
+    fn the_registration_declares_the_mcp_url_and_the_hooks() {
         let deployment = PublicDeployment::new("http://vv-n8n.internal:8811").unwrap();
         let registration = registration(
             &deployment,
@@ -58,8 +57,7 @@ mod tests {
             serde_json::json!({
                 "publicRoutes": [
                     {"prefix": "/n8n/hooks/", "maxBodyBytes": 1_048_576, "requestsPerMinute": 600}
-                ],
-                "appOrigin": true
+                ]
             })
         );
     }

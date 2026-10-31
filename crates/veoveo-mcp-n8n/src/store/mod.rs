@@ -1,4 +1,4 @@
-//! The server's own tables in the `n8n` schema: what it applied from the branch's
+//! The server's own tables in the `n8n` schema: what it applied from the team's
 //! `workflows/` for its tenant, the runs it dispatched and n8n's encryption key. Each
 //! statement is a `.sql` file under `workflows/`, `runs/` or `instance/`, run through
 //! sqlx's checked `query_file*!` macros. n8n's own `n8n_*` tables share the
@@ -7,7 +7,7 @@ mod instance;
 mod runs;
 
 pub use instance::{InstanceKeyError, InstanceKeyStore, KeyOrigin};
-pub use runs::{Run, RunStore};
+pub use runs::{Dispatched, Run, RunStore};
 
 use crate::{
     contract::{FileDigest, WorkflowName, Workflows},
@@ -17,7 +17,7 @@ use veoveo_hub_sdk::definition::CollectionRequest;
 use veoveo_store::{PlatformStore, TenantId};
 use veoveo_types::{LiveKeyset, Pager, PagingError};
 
-/// The most workflows one branch holds.
+/// The most workflows one team holds.
 pub const MAX_WORKFLOWS: usize = 500;
 
 /// One workflow as the server applied it.
@@ -131,7 +131,7 @@ impl WorkflowStore {
         Ok(())
     }
 
-    /// Forget `workflow`, whose file left the branch.
+    /// Forget `workflow`, whose file left the team's files.
     pub async fn forget(
         &self,
         tenant: TenantId,
@@ -147,7 +147,7 @@ impl WorkflowStore {
         Ok(())
     }
 
-    /// `tenant`'s applied `workflow`, or `None` when the branch has no such workflow.
+    /// `tenant`'s applied `workflow`, or `None` when the team has no such workflow.
     pub async fn workflow(
         &self,
         tenant: TenantId,

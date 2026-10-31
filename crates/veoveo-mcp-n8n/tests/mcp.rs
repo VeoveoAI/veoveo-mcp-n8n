@@ -1,75 +1,81 @@
-//! The MCP surface and the server's HTTP surfaces through the SDK's in-process Hub
-//! against a migrated database: discovery, permission refusals, the refusal of another
-//! tenant, the workflows, executions and editor resources, the tools a caller without
-//! Task support reaches, the hooks' deliveries to n8n's webhooks and the editor's proxy on
-//! the app origin. The test user is `user-1` of `tenant-a`. n8n's answers come from the
-//! fake n8n in `support`, which proves the server's side, not n8n. Requires the
-//! PostgreSQL 18 server programs on `PATH`.
+//! The MCP surface and the hooks through the SDK's in-process Hub against a migrated
+//! database: discovery, the overview App and the tool linked to it, permission refusals,
+//! the refusal of another tenant, the workflows, status and executions resources, the
+//! data rule of an execution for its run's caller, a writer of the linked repository and
+//! a reader, the tools a caller without Task support reaches, and the hooks' deliveries
+//! to n8n's webhooks. Callers are `user-1`, the test user, and `user-2` of `tenant-a`,
+//! each with a forwarded grant on the runner's linked repository or none. n8n's answers
+//! come from the fake n8n in `support`, which proves the server's side, not n8n. Requires
+//! the PostgreSQL 18 server programs on `PATH`.
 mod support;
 
 use std::{sync::Arc, time::Duration};
 
-use axum::{
-    body::Body,
-    http::{Request, StatusCode},
-};
+use axum::{body::Body, http::StatusCode};
 use secrecy::SecretString;
 use serde_json::{Value, json};
-use support::{API_KEY, FakeN8n, N8N_ID, OWNER_SESSION, RENEWED_SESSION, VERSION};
-use tower::ServiceExt;
+use support::{API_KEY, FakeExecution, FakeN8n, N8N_ID, VERSION};
 use url::Url;
 use veoveo_fixtures::store::TestDb;
 use veoveo_hub_sdk::{
+    ForwardedRequest, HubInternalTokenIssuer, HubProfileId, OAuthClientId, Principal, TokenIssuer,
+    TokenSubject,
     apps::AppHtml,
     durable_tasks::DurableTasks,
     hosting::{
         Hosted, HostedServer,
         testing::{self, TestHub},
     },
-    registration::AppOrigin,
+    registration::{RepositoryAction, RepositoryGrant, RepositoryId, ResourceIndicator},
 };
 use veoveo_mcp_n8n::{
     contract::{
-        FileDigest,
-        N8nPermission::{self, Editor, ExecutionsWrite, WorkflowsRead, WorkflowsRun},
+        ExecutionId, FileDigest,
+        N8nPermission::{self, ExecutionsWrite, WorkflowsRead, WorkflowsRun},
         WorkflowName,
     },
-    editor::{self, EditorSession},
     hooks,
     mcp::{N8nMcp, Served},
     migrator,
     n8n::{N8nClient, N8nWorkflowId},
     runs::N8nTasks,
     server,
-    store::{AppliedWorkflow, WorkflowStore, stored_tenant},
+    store::{AppliedWorkflow, RunStore, WorkflowStore, stored_tenant},
 };
 use veoveo_store::PlatformStore;
 use veoveo_task::{Instance, TaskRuntime};
+use veoveo_types::PrincipalId;
 
-const APP_HOST: &str = "n8n.apps.veoveo.test";
+/// The team repository the runner serves, by its Lore ID.
+const REPOSITORY: &str = "0123456789abcdef0123456789abcdef";
+/// The n8n instance whose executions the server dispatched.
+const N8N_INSTANCE: uuid::Uuid = uuid::Uuid::from_u128(0x0190_f3a2_7b1c_7d2e_8f3a_4b5c_6d7e_8f91);
 
 fn served(tenant: &str) -> Served {
     Served {
         tenant: veoveo_types::TenantId::parse(tenant).unwrap(),
-        editor_url: Url::parse(&format!("https://{APP_HOST}/")).unwrap(),
         hooks_url: Url::parse(
             "https://hub.veoveo.test/instances/019a5b30-0000-7000-8000-000000000001/n8n/hooks/",
         )
         .unwrap(),
+        issuer: Url::parse(testing::TEST_ISSUER).unwrap(),
+        n8n_version: "2.46.0".to_owned(),
+        started_at: "2026-10-31T10:00:00Z".to_owned(),
     }
 }
 
 fn app() -> AppHtml {
-    AppHtml::load(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/editor.html").as_ref()).unwrap()
+    AppHtml::load(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/overview.html").as_ref()).unwrap()
 }
 
-/// The server on `db` serving `tenant` with `n8n`, its hooks, its editor and its Tasks,
-/// and the pool it holds, which the test closes.
+/// The server on `db` serving `tenant` with `n8n`, its hooks and its Tasks, and the pool
+/// it holds, which the test closes.
 async fn hosted(db: &TestDb, n8n: &FakeN8n, tenant: &str) -> (HostedServer, PlatformStore) {
     let _ = rustls::crypto::ring::default_provider().install_default();
     let store = db.server_store(&server()).await;
     let pool = store.clone();
     let workflows = WorkflowStore::new(store.clone());
+    let runs = RunStore::new(store.clone());
     let instance = Arc::new(Instance::start(&store, &server()).await.unwrap());
     let runtime = TaskRuntime::new(store, server(), testing::deployment_id(), instance.clone());
     let tasks = N8nTasks::new(
@@ -80,16 +86,14 @@ async fn hosted(db: &TestDb, n8n: &FakeN8n, tenant: &str) -> (HostedServer, Plat
     let client = N8nClient::new(n8n.base.clone())
         .unwrap()
         .with_api_key(SecretString::from(API_KEY));
-    let session = Arc::new(EditorSession::new(
-        N8nClient::new(n8n.base.clone()).unwrap(),
-        SecretString::from("owner-password"),
-    ));
     let served = served(tenant);
     let app = app();
     let hosted = testing::for_domain::<N8nMcp>()
         .handler(move || {
             Hosted::new(N8nMcp::new(
                 workflows.clone(),
+                runs.clone(),
+                N8N_INSTANCE,
                 client.clone(),
                 served.clone(),
                 app.clone(),
@@ -97,14 +101,6 @@ async fn hosted(db: &TestDb, n8n: &FakeN8n, tenant: &str) -> (HostedServer, Plat
             .with_tasks(DurableTasks::tasks_only(tasks.clone()))
         })
         .public_routes(hooks::router(n8n.base.clone()))
-        .authenticated_routes(editor::router(
-            n8n.base.clone(),
-            session,
-            Some(APP_HOST.to_owned()),
-        ))
-        .app_origin(Some(
-            AppOrigin::parse(&format!("https://{APP_HOST}")).unwrap(),
-        ))
         .build();
     let _ = instance;
     (hosted, pool)
@@ -124,6 +120,54 @@ async fn hub(
     )
 }
 
+/// `person` of `tenant-a`: `user-1` is the test user, who calls through the mesh too.
+fn person(person: &str) -> Principal {
+    let mut principal = testing::principal();
+    principal.id = PrincipalId::parse(format!("https://idp.example.com#{person}")).unwrap();
+    principal.subject = TokenSubject::parse(person).unwrap();
+    principal
+}
+
+/// A forwarded token for `person` with `permissions` and, for a runner, their grant on
+/// the linked repository holding `actions`.
+fn token(person_id: &str, permissions: &[N8nPermission], actions: Option<&[&str]>) -> String {
+    let grant = actions.map(|actions| RepositoryGrant {
+        repository: RepositoryId::parse(REPOSITORY).unwrap(),
+        actions: actions
+            .iter()
+            .map(|action| RepositoryAction::parse(*action).unwrap())
+            .collect(),
+    });
+    HubInternalTokenIssuer::new(
+        TokenIssuer::parse(testing::TEST_ISSUER).unwrap(),
+        testing::signing_key(),
+    )
+    .unwrap()
+    .issue_with_repository(
+        ForwardedRequest {
+            deployment: testing::deployment_id(),
+            profile: HubProfileId::parse("operations").unwrap(),
+            server: server(),
+            audience: ResourceIndicator::parse(testing::TEST_RESOURCE).unwrap(),
+            client: OAuthClientId::parse(testing::TEST_CLIENT).unwrap(),
+            actor: person(person_id),
+            authority: testing::authority(),
+            permissions: permissions
+                .iter()
+                .map(|permission| permission.name())
+                .collect(),
+            request_context: None,
+            acting_server: None,
+            acting_task: None,
+            delegation_context: None,
+            expires_at: chrono::Utc::now() + chrono::TimeDelta::minutes(5),
+        },
+        grant,
+    )
+    .unwrap()
+    .bearer_token
+}
+
 fn error_message(response: &Value) -> &str {
     response["error"]["message"].as_str().unwrap_or_default()
 }
@@ -139,34 +183,87 @@ async fn read(hub: &TestHub, uri: &str) -> Value {
     hub.rpc("resources/read", json!({"uri": uri})).await
 }
 
+async fn read_as(hub: &TestHub, bearer: &str, uri: &str) -> Value {
+    hub.rpc_with("resources/read", json!({"uri": uri}), Some(bearer))
+        .await
+        .1
+}
+
+async fn call_as(hub: &TestHub, bearer: &str, tool: &str, arguments: Value) -> Value {
+    hub.rpc_with(
+        "tools/call",
+        json!({"name": tool, "arguments": arguments}),
+        Some(bearer),
+    )
+    .await
+    .1
+}
+
+/// The workflow the tests apply: a webhook, with the fake's one published workflow.
+async fn record_hello(db: &TestDb) -> Value {
+    let workflows = WorkflowStore::new(db.server_store(&server()).await);
+    let tenant = stored_tenant(&veoveo_types::TenantId::parse("tenant-a").unwrap()).unwrap();
+    let applied = json!({
+        "name": "Hello Veoveo",
+        "nodes": [{"name": "Hook", "type": "n8n-nodes-base.webhook",
+                   "parameters": {"httpMethod": "POST", "path": "hello-veoveo"}}],
+        "connections": {},
+        "settings": {}
+    });
+    workflows
+        .record(
+            tenant,
+            &AppliedWorkflow {
+                workflow: WorkflowName::parse("hello-veoveo").unwrap(),
+                n8n_id: N8nWorkflowId::parse(N8N_ID).unwrap(),
+                digest: FileDigest::from_bytes([7; 32]),
+                version: uuid::Uuid::parse_str(VERSION).unwrap(),
+                runnable: false,
+                applied: applied.clone(),
+            },
+        )
+        .await
+        .unwrap();
+    applied
+}
+
 #[tokio::test]
-async fn workflows_executions_and_the_editor_are_read_with_their_permissions_for_one_tenant() {
+async fn discovery_lists_the_overview_app_with_run_linked_and_no_editor() {
     tokio::time::timeout(Duration::from_secs(60), async {
         let db = TestDb::new().await;
         db.migrate_server(&server(), migrator()).await;
         let n8n = FakeN8n::start().await;
-        let (full, full_pool) =
-            hub(&db, &n8n, "tenant-a", &[WorkflowsRead, WorkflowsRun, ExecutionsWrite, Editor]).await;
+        let (full, pool) = hub(
+            &db,
+            &n8n,
+            "tenant-a",
+            &[WorkflowsRead, WorkflowsRun, ExecutionsWrite],
+        )
+        .await;
 
-        // Discovery: the fixed resources, the templates, the editor's App and the tools.
         let listed = full.rpc("resources/list", json!({})).await;
-        let uris: Vec<&str> = listed["result"]["resources"]
+        let resources = listed["result"]["resources"]
             .as_array()
-            .unwrap_or_else(|| panic!("{listed}"))
+            .unwrap_or_else(|| panic!("{listed}"));
+        let uris: Vec<&str> = resources
             .iter()
             .filter_map(|resource| resource["uri"].as_str())
             .collect();
         for uri in [
             "n8n://workflows",
             "n8n://executions",
-            "n8n://editor",
+            "n8n://status",
             "n8n://docs",
             "n8n://contract",
-            "ui://n8n/editor",
+            "ui://n8n/overview",
         ] {
             assert!(uris.contains(&uri), "{uri}: {uris:?}");
         }
-        let templates = full.rpc("resources/templates/list", json!({})).await.to_string();
+        assert!(!listed.to_string().contains("editor"), "{listed}");
+        let templates = full
+            .rpc("resources/templates/list", json!({}))
+            .await
+            .to_string();
         for template in [
             "n8n://workflow/{workflow}",
             "n8n://execution/{execution_id}",
@@ -174,67 +271,103 @@ async fn workflows_executions_and_the_editor_are_read_with_their_permissions_for
         ] {
             assert!(templates.contains(template), "{template}: {templates}");
         }
+
+        // `run` is linked to the overview for the model and the App; nothing else is.
         let tools = full.rpc("tools/list", json!({})).await;
-        let mut names: Vec<&str> = tools["result"]["tools"]
+        let tools = tools["result"]["tools"]
             .as_array()
-            .unwrap_or_else(|| panic!("{tools}"))
+            .unwrap_or_else(|| panic!("{tools}"));
+        let mut names: Vec<&str> = tools
             .iter()
             .filter_map(|tool| tool["name"].as_str())
             .collect();
         names.sort_unstable();
-        assert_eq!(names, ["editor_changes", "retry_execution", "run", "stop_execution"]);
+        assert_eq!(names, ["retry_execution", "run", "stop_execution"]);
+        for tool in tools {
+            let ui = &tool["_meta"]["ui"];
+            if tool["name"] == "run" {
+                assert_eq!(ui["resourceUri"], "ui://n8n/overview", "{tool}");
+                assert_eq!(ui["visibility"], json!(["model", "app"]), "{tool}");
+            } else {
+                assert!(ui.is_null(), "{tool}");
+            }
+        }
 
-        // The editor's App is a launcher: it reads the editor's address and opens the
-        // app origin with ui/open-link; it frames nothing and declares no frame domain.
-        let app = full
-            .rpc("resources/read", json!({"uri": "ui://n8n/editor"}))
+        // The overview is self-contained: it finds the teams among the server's resources
+        // the host lists, reads each link's, runs with `{link}__run`, opens the person's
+        // Computer with ui/open-link and frames nothing.
+        let document = full
+            .rpc("resources/read", json!({"uri": "ui://n8n/overview"}))
             .await;
-        let html = app["result"]["contents"][0]["text"]
+        let html = document["result"]["contents"][0]["text"]
             .as_str()
             .unwrap_or_default();
-        assert!(html.contains("n8n://editor"), "{app}");
-        assert!(html.contains("ui/open-link"), "{app}");
-        assert!(!html.contains("<iframe"), "{app}");
-        let descriptor = listed["result"]["resources"]
-            .as_array()
-            .unwrap()
+        for needle in [
+            "resources/list",
+            "__run",
+            "ui/open-link",
+            "tasks/get",
+            "status$",
+        ] {
+            assert!(html.contains(needle), "{needle}");
+        }
+        assert!(!html.contains("<iframe"));
+        let descriptor = resources
             .iter()
-            .find(|resource| resource["uri"] == "ui://n8n/editor")
+            .find(|resource| resource["uri"] == "ui://n8n/overview")
             .unwrap();
-        assert!(
-            !descriptor.to_string().contains("frameDomains"),
-            "{descriptor}"
-        );
+        assert!(!descriptor.to_string().contains("Domains"), "{descriptor}");
 
-        // An empty branch lists no workflow.
+        // A view of the runners' shared App calls `{link}__run`, which the host's shared
+        // admission resolves to the Hub's name of that link's `run`, as the Hub lists the
+        // runner's tools; no other tool of the link is the App's.
+        let overview: rmcp::model::Resource = serde_json::from_value(descriptor.clone()).unwrap();
+        let linked: Vec<rmcp::model::Tool> = tools
+            .iter()
+            .map(|tool| {
+                let mut tool = tool.clone();
+                tool["name"] = json!(format!(
+                    "n8n__marketing__{}",
+                    tool["name"].as_str().unwrap()
+                ));
+                serde_json::from_value(tool).unwrap()
+            })
+            .collect();
+        let resolved = veoveo_hub_sdk::apps::resolve_app_tool(&overview, &linked, "marketing__run")
+            .expect("the App runs a link's workflow");
+        assert_eq!(resolved.name, "n8n__marketing__run");
+        for refused in [
+            "marketing__stop_execution",
+            "marketing__retry_execution",
+            "sales__run",
+        ] {
+            assert!(
+                veoveo_hub_sdk::apps::resolve_app_tool(&overview, &linked, refused).is_none(),
+                "{refused}"
+            );
+        }
+        pool.close().await;
+    })
+    .await
+    .expect("the discovery test exceeded 60 seconds");
+}
+
+#[tokio::test]
+async fn workflows_and_status_read_with_their_permissions_for_one_tenant() {
+    tokio::time::timeout(Duration::from_secs(60), async {
+        let db = TestDb::new().await;
+        db.migrate_server(&server(), migrator()).await;
+        let n8n = FakeN8n::start().await;
+        let (full, full_pool) =
+            hub(&db, &n8n, "tenant-a", &[WorkflowsRead, WorkflowsRun, ExecutionsWrite]).await;
+
+        // A team without workflows lists none.
         let listing = read_json(&read(&full, "n8n://workflows").await);
         assert_eq!(listing["items"], json!([]));
 
         // One workflow the server applied reads with n8n's published state and its
         // webhook's public URL.
-        let workflows = WorkflowStore::new(db.server_store(&server()).await);
-        let tenant = stored_tenant(&veoveo_types::TenantId::parse("tenant-a").unwrap()).unwrap();
-        let applied = json!({
-            "name": "Hello Veoveo",
-            "nodes": [{"name": "Hook", "type": "n8n-nodes-base.webhook",
-                       "parameters": {"httpMethod": "POST", "path": "hello-veoveo"}}],
-            "connections": {},
-            "settings": {}
-        });
-        workflows
-            .record(
-                tenant,
-                &AppliedWorkflow {
-                    workflow: WorkflowName::parse("hello-veoveo").unwrap(),
-                    n8n_id: N8nWorkflowId::parse(N8N_ID).unwrap(),
-                    digest: FileDigest::from_bytes([7; 32]),
-                    version: uuid::Uuid::parse_str(VERSION).unwrap(),
-                    runnable: false,
-                    applied: applied.clone(),
-                },
-            )
-            .await
-            .unwrap();
+        let applied = record_hello(&db).await;
         let listing = read_json(&read(&full, "n8n://workflows").await);
         assert_eq!(
             listing["items"],
@@ -255,40 +388,32 @@ async fn workflows_executions_and_the_editor_are_read_with_their_permissions_for
         let missing = read(&full, "n8n://workflow/not-applied").await;
         assert!(error_message(&missing).contains("no such workflow"), "{missing}");
 
-        // n8n's executions read with the workflow's file name, newest first.
-        {
-            let mut state = n8n.state();
-            for (id, status) in [(1, "success"), (2, "error")] {
-                state.executions.insert(
-                    id,
-                    support::FakeExecution {
-                        status: status.to_owned(),
-                        dispatch: json!({"operationId": "op"}),
-                        output: vec![json!({"greeting": "hi"})],
-                    },
-                );
-            }
-        }
-        let executions = read_json(&read(&full, "n8n://executions").await);
-        let ids: Vec<&str> = executions["items"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|item| item["execution"].as_str().unwrap())
-            .collect();
-        assert_eq!(ids, ["2", "1"], "{executions}");
-        assert_eq!(executions["items"][0]["workflow"], "hello-veoveo");
-        let failed = read_json(&read(&full, "n8n://executions?workflow=hello-veoveo&status=error").await);
-        assert_eq!(failed["items"].as_array().unwrap().len(), 1, "{failed}");
-        let none = read_json(&read(&full, "n8n://executions?workflow=not-applied").await);
-        assert_eq!(none["items"], json!([]));
-        let one = read_json(&read(&full, "n8n://execution/1").await);
-        assert_eq!(one["status"], "success");
-        assert_eq!(one["output"], json!([{"greeting": "hi"}]));
-        let stopped = full
-            .rpc("tools/call", json!({"name": "stop_execution", "arguments": {"execution": "1"}}))
-            .await;
-        assert!(stopped.to_string().contains("already finished"), "{stopped}");
+        // The status names what the runner applied and, through a runner, the linked
+        // repository the caller reached it through, whether their grant writes, and where
+        // their own Computer edits it.
+        let writer = token("user-2", &[WorkflowsRead], Some(&["write"]));
+        let status = read_json(&read_as(&full, &writer, "n8n://status").await);
+        assert_eq!(
+            status,
+            json!({
+                "n8nVersion": "2.46.0",
+                "serverVersion": env!("CARGO_PKG_VERSION"),
+                "startedAt": "2026-10-31T10:00:00Z",
+                "workflows": [{"workflow": "hello-veoveo", "fileSha256": "07".repeat(32)}],
+                "hooksUrl": "https://hub.veoveo.test/instances/019a5b30-0000-7000-8000-000000000001/n8n/hooks/",
+                "repository": REPOSITORY,
+                "writer": true,
+                "editUrl": format!("https://hub.veoveo.test/computer/apps/n8n/open?repository={REPOSITORY}")
+            })
+        );
+        let reader = token("user-2", &[WorkflowsRead], Some(&[]));
+        let status = read_json(&read_as(&full, &reader, "n8n://status").await);
+        assert_eq!(status["writer"], false);
+        assert_eq!(status["repository"], REPOSITORY);
+        // A server that is no runner names no repository and no Computer to edit in.
+        let status = read_json(&read(&full, "n8n://status").await);
+        assert_eq!(status["writer"], false);
+        assert!(status.get("repository").is_none() && status.get("editUrl").is_none(), "{status}");
 
         // `run` is a Task: a caller without Task support is told so.
         let run = full
@@ -296,15 +421,8 @@ async fn workflows_executions_and_the_editor_are_read_with_their_permissions_for
             .await;
         assert!(run["error"].is_object() || run["result"]["isError"] == true, "{run}");
 
-        let editor = read_json(&read(&full, "n8n://editor").await);
-        assert_eq!(editor["editorUrl"], format!("https://{APP_HOST}/"));
-
         // Each surface needs its own permission.
         let (reader, reader_pool) = hub(&db, &n8n, "tenant-a", &[WorkflowsRead]).await;
-        let denied = read(&reader, "n8n://editor").await;
-        assert!(error_message(&denied).contains("n8n.editor"), "{denied}");
-        let denied = reader.rpc("resources/read", json!({"uri": "ui://n8n/editor"})).await;
-        assert!(error_message(&denied).contains("n8n.editor"), "{denied}");
         let denied = reader
             .rpc("tools/call", json!({"name": "stop_execution", "arguments": {"execution": "2"}}))
             .await;
@@ -313,14 +431,16 @@ async fn workflows_executions_and_the_editor_are_read_with_their_permissions_for
             .rpc("tools/call", json!({"name": "run", "arguments": {"workflow": "hello-veoveo"}}))
             .await;
         assert!(error_message(&denied).contains("n8n.workflows.run"), "{denied}");
-        let (none, none_pool) = hub(&db, &n8n, "tenant-a", &[Editor]).await;
-        let denied = read(&none, "n8n://workflows").await;
-        assert!(error_message(&denied).contains("n8n.workflows.read"), "{denied}");
+        let (none, none_pool) = hub(&db, &n8n, "tenant-a", &[]).await;
+        for uri in ["n8n://workflows", "n8n://status", "ui://n8n/overview"] {
+            let denied = read(&none, uri).await;
+            assert!(error_message(&denied).contains("n8n.workflows.read"), "{uri}: {denied}");
+        }
 
-        // A branch that serves another tenant refuses this caller.
+        // A runner that serves another tenant refuses this caller.
         let (other, other_pool) =
-            hub(&db, &n8n, "reference", &[WorkflowsRead, ExecutionsWrite, Editor]).await;
-        for uri in ["n8n://workflows", "n8n://workflow/hello-veoveo", "n8n://editor", "n8n://executions", "n8n://execution/1"] {
+            hub(&db, &n8n, "reference", &[WorkflowsRead, ExecutionsWrite]).await;
+        for uri in ["n8n://workflows", "n8n://workflow/hello-veoveo", "n8n://status", "n8n://executions", "n8n://execution/1"] {
             let refused = read(&other, uri).await;
             assert!(
                 error_message(&refused).contains("serves another tenant"),
@@ -328,7 +448,7 @@ async fn workflows_executions_and_the_editor_are_read_with_their_permissions_for
             );
         }
         let refused = other
-            .rpc("tools/call", json!({"name": "editor_changes", "arguments": {}}))
+            .rpc("tools/call", json!({"name": "stop_execution", "arguments": {"execution": "1"}}))
             .await;
         assert!(refused.to_string().contains("serves another tenant"), "{refused}");
         for pool in [full_pool, reader_pool, none_pool, other_pool] {
@@ -339,38 +459,191 @@ async fn workflows_executions_and_the_editor_are_read_with_their_permissions_for
     .expect("the MCP test exceeded 60 seconds");
 }
 
-fn on_app_origin(
-    path: &str,
-    method: &str,
-    bearer: Option<String>,
-    cookie: Option<&str>,
-) -> Request<Body> {
-    let mut request = Request::builder()
-        .method(method)
-        .uri(path)
-        .header("host", APP_HOST);
-    if let Some(bearer) = bearer {
-        request = request.header("authorization", format!("Bearer {bearer}"));
-    }
-    if let Some(cookie) = cookie {
-        request = request.header("cookie", cookie);
-    }
-    request.body(Body::empty()).unwrap()
+#[tokio::test]
+async fn an_executions_data_reaches_its_runs_caller_or_a_writer_and_others_read_its_summary() {
+    tokio::time::timeout(Duration::from_secs(60), async {
+        let db = TestDb::new().await;
+        db.migrate_server(&server(), migrator()).await;
+        let n8n = FakeN8n::start().await;
+        let (hub, pool) = hub(&db, &n8n, "tenant-a", &[]).await;
+        record_hello(&db).await;
+        // Executions 1 and 2 are a webhook's; 3 and 4 are runs' that user-1's Tasks
+        // dispatched.
+        {
+            let mut state = n8n.state();
+            for (id, status) in [(1, "success"), (2, "error"), (3, "success"), (4, "running")] {
+                state.executions.insert(
+                    id,
+                    FakeExecution {
+                        status: status.to_owned(),
+                        dispatch: json!({"operationId": format!("op-{id}")}),
+                        output: vec![json!({"greeting": "hi"})],
+                        ..FakeExecution::default()
+                    },
+                );
+            }
+        }
+        let runs = RunStore::new(db.server_store(&server()).await);
+        let tenant = stored_tenant(&veoveo_types::TenantId::parse("tenant-a").unwrap()).unwrap();
+        let caller = person("user-1").id;
+        for execution in ["3", "4"] {
+            runs.record_dispatched(
+                tenant,
+                N8N_INSTANCE,
+                &ExecutionId::parse(execution).unwrap(),
+                uuid::Uuid::now_v7(),
+                caller.as_str(),
+            )
+            .await
+            .unwrap();
+        }
+        let all = [WorkflowsRead, ExecutionsWrite];
+        let run_caller = token("user-1", &all, Some(&[]));
+        let writer = token("user-2", &all, Some(&["write"]));
+        let reader = token("user-2", &all, Some(&[]));
+        let unlinked = token("user-2", &all, None);
+
+        let data = |execution: &Value| {
+            assert_eq!(execution["access"], "data", "{execution}");
+            assert!(execution.get("runData").is_some(), "{execution}");
+        };
+        let summary = |execution: &Value| {
+            assert_eq!(execution["access"], "summary", "{execution}");
+            for detail in ["output", "runData"] {
+                assert!(execution.get(detail).is_none(), "{detail}: {execution}");
+            }
+        };
+        // A webhook's execution: its data to a writer of the repository.
+        let one = read_json(&read_as(&hub, &writer, "n8n://execution/1").await);
+        data(&one);
+        assert_eq!(one["output"], json!([{"greeting": "hi"}]));
+        for bearer in [&reader, &run_caller, &unlinked] {
+            summary(&read_json(
+                &read_as(&hub, bearer, "n8n://execution/1").await,
+            ));
+        }
+        // A failure's summary names the failing node and the error, never its data.
+        let failed = read_json(&read_as(&hub, &reader, "n8n://execution/2").await);
+        summary(&failed);
+        assert_eq!(failed["failedNode"], "Done");
+        assert_eq!(failed["error"], "the step failed");
+        assert_eq!(failed["status"], "error");
+        // A run's execution: its data to the run's caller alone, a writer included out.
+        let three = read_json(&read_as(&hub, &run_caller, "n8n://execution/3").await);
+        data(&three);
+        assert_eq!(three["output"], json!([{"greeting": "hi"}]));
+        for bearer in [&writer, &reader, &unlinked] {
+            summary(&read_json(
+                &read_as(&hub, bearer, "n8n://execution/3").await,
+            ));
+        }
+        // A listing, newest first and by the workflow's file name, carries no detail and
+        // names no access.
+        let listing = read_json(&read_as(&hub, &writer, "n8n://executions").await);
+        let ids: Vec<&str> = listing["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|item| item["execution"].as_str().unwrap())
+            .collect();
+        assert_eq!(ids, ["4", "3", "2", "1"], "{listing}");
+        for item in listing["items"].as_array().unwrap() {
+            assert_eq!(item["workflow"], "hello-veoveo", "{item}");
+            for detail in ["access", "output", "runData", "failedNode", "error"] {
+                assert!(item.get(detail).is_none(), "{detail}: {item}");
+            }
+        }
+        let failed = read_json(
+            &read_as(
+                &hub,
+                &reader,
+                "n8n://executions?workflow=hello-veoveo&status=error",
+            )
+            .await,
+        );
+        assert_eq!(failed["items"].as_array().unwrap().len(), 1, "{failed}");
+        let none =
+            read_json(&read_as(&hub, &reader, "n8n://executions?workflow=not-applied").await);
+        assert_eq!(none["items"], json!([]));
+
+        // Stopping and retrying need the same access.
+        let refusal = "only the caller of the run that started this execution";
+        for (bearer, execution) in [(&reader, "1"), (&writer, "4"), (&reader, "4")] {
+            let refused = call_as(
+                &hub,
+                bearer,
+                "stop_execution",
+                json!({"execution": execution}),
+            )
+            .await;
+            assert!(
+                refused.to_string().contains(refusal),
+                "{execution}: {refused}"
+            );
+        }
+        let refused = call_as(&hub, &reader, "retry_execution", json!({"execution": "2"})).await;
+        assert!(refused.to_string().contains(refusal), "{refused}");
+        assert!(n8n.state().stops.is_empty() && n8n.state().retries.is_empty());
+        let finished = call_as(&hub, &writer, "stop_execution", json!({"execution": "1"})).await;
+        assert!(
+            finished.to_string().contains("already finished"),
+            "{finished}"
+        );
+        let stopped = call_as(
+            &hub,
+            &run_caller,
+            "stop_execution",
+            json!({"execution": "4"}),
+        )
+        .await;
+        assert_eq!(
+            stopped["result"]["structuredContent"]["status"], "canceled",
+            "{stopped}"
+        );
+        assert_eq!(
+            stopped["result"]["structuredContent"]["access"], "data",
+            "{stopped}"
+        );
+        // A writer's retry of a webhook's execution stays the writers'.
+        let retried = call_as(&hub, &writer, "retry_execution", json!({"execution": "2"})).await;
+        let retried = &retried["result"]["structuredContent"];
+        assert_eq!(retried["retryOf"], "2", "{retried}");
+        assert_eq!(retried["access"], "data", "{retried}");
+        let id = retried["execution"].as_str().unwrap().to_owned();
+        summary(&read_json(
+            &read_as(&hub, &run_caller, &format!("n8n://execution/{id}")).await,
+        ));
+        // A retry of a run's execution stays its caller's, who alone may ask for it.
+        let retried = call_as(
+            &hub,
+            &run_caller,
+            "retry_execution",
+            json!({"execution": "3"}),
+        )
+        .await;
+        let retried = &retried["result"]["structuredContent"];
+        assert_eq!(retried["access"], "data", "{retried}");
+        let id = retried["execution"].as_str().unwrap().to_owned();
+        summary(&read_json(
+            &read_as(&hub, &writer, &format!("n8n://execution/{id}")).await,
+        ));
+        data(&read_json(
+            &read_as(&hub, &run_caller, &format!("n8n://execution/{id}")).await,
+        ));
+        assert_eq!(n8n.state().stops, [1, 4]);
+        assert_eq!(n8n.state().retries, [2, 3]);
+        pool.close().await;
+    })
+    .await
+    .expect("the data rule test exceeded 60 seconds");
 }
 
 #[tokio::test]
-async fn the_hooks_reach_n8n_s_webhooks_and_the_editor_acts_as_n8n_s_owner() {
+async fn the_hooks_reach_n8n_s_webhooks_alone() {
     let db = TestDb::new().await;
     db.migrate_server(&server(), migrator()).await;
     let n8n = FakeN8n::start().await;
-    let (hub, hub_pool) = hub(&db, &n8n, "tenant-a", &[Editor]).await;
-    // The editor's answers are read whole, headers included, from the server's router.
-    let (hosted, router_pool) = hosted(&db, &n8n, "tenant-a").await;
-    let router = hosted.into_router();
-    let send = |request: Request<Body>| {
-        let router = router.clone();
-        async move { router.oneshot(request).await.unwrap() }
-    };
+    let (hub, hub_pool) = hub(&db, &n8n, "tenant-a", &[WorkflowsRead]).await;
 
     // A delivery reaches n8n's webhook without the server's headers or cookies, and its
     // answer sets no cookie.
@@ -423,62 +696,17 @@ async fn the_hooks_reach_n8n_s_webhooks_and_the_editor_acts_as_n8n_s_owner() {
         .await;
     assert_eq!(status, StatusCode::NOT_FOUND, "a delivery started a run");
     assert!(n8n.state().dispatches.is_empty());
-
-    // The editor: the Hub's token and n8n.editor admit a person, whose request reaches n8n
-    // with the owner's session in place of any the browser sent and without the Hub's
-    // token; the answer carries no n8n cookie and keeps n8n's frame refusal.
-    let response = send(on_app_origin("/", "GET", None, None)).await;
-    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
-    let response = send(on_app_origin(
-        "/",
-        "GET",
-        Some(hub.token_granting([])),
-        None,
-    ))
-    .await;
-    assert_eq!(response.status(), StatusCode::FORBIDDEN);
-    let response = send(on_app_origin(
-        "/rest/workflows?filter=1",
-        "PATCH",
-        Some(hub.token()),
-        Some("theme=dark; n8n-auth=forged"),
-    ))
-    .await;
-    assert_eq!(response.status(), StatusCode::OK);
-    assert!(response.headers().get("set-cookie").is_none());
-    assert_eq!(response.headers()["x-frame-options"], "SAMEORIGIN");
-    let body = axum::body::to_bytes(response.into_body(), 1 << 20)
-        .await
-        .unwrap();
-    let echoed: Value = serde_json::from_slice(&body).unwrap();
-    assert_eq!(echoed["uri"], "/rest/workflows?filter=1");
-    assert_eq!(
-        echoed["cookie"],
-        format!("theme=dark; n8n-auth={OWNER_SESSION}")
-    );
-    assert_eq!(echoed["authorization"], false);
-    // The owner signed in once; n8n's renewed session serves the next request.
-    let response = send(on_app_origin("/", "GET", Some(hub.token()), None)).await;
-    assert_eq!(response.status(), StatusCode::OK);
-    {
-        let state = n8n.state();
-        assert_eq!(state.logins, 1);
-        let (_, _, headers) = state.editor.last().unwrap();
-        assert_eq!(
-            headers["cookie"],
-            format!("n8n-auth={RENEWED_SESSION}").as_str()
-        );
+    // n8n's editor and REST API are nowhere on the server's surface.
+    for path in ["/rest/login", "/", "/home/workflows"] {
+        let (status, _) = hub
+            .send(
+                hub.request(path)
+                    .header("authorization", format!("Bearer {}", hub.token()))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{path}");
     }
-    // The editor is the app origin's alone: under the mount it answers nothing.
-    let (status, _) = hub
-        .send(
-            hub.request("/rest/login")
-                .header("authorization", format!("Bearer {}", hub.token()))
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await;
-    assert_eq!(status, StatusCode::NOT_FOUND);
     hub_pool.close().await;
-    router_pool.close().await;
 }

@@ -1,12 +1,13 @@
-//! The hosted process: read the branch's instance and workflows, register with the Hub,
+//! The hosted process, a runner of one linked team repository: read what the n8n
+//! repository admits and the team's instance and workflows, register with the Hub,
 //! connect with the registration's database login, hold a process instance, migrate,
-//! start n8n as the child process, apply the workflows, then serve MCP, the hooks, the
-//! editor and the Veoveo nodes' loopback listener and run the Task worker until SIGTERM
-//! or Ctrl-C, until the instance loses its lock or until n8n exits.
+//! start n8n as the child process, apply the workflows, then serve MCP, the hooks and the
+//! Veoveo nodes' loopback listener and run the Task worker until SIGTERM or Ctrl-C, until
+//! the instance loses its lock or until n8n exits.
 mod config;
 mod registration;
 
-use std::{net::SocketAddr, sync::Arc};
+use std::{net::SocketAddr, path::Path, sync::Arc};
 
 use anyhow::{Context, Result};
 use clap::Parser;
@@ -24,12 +25,11 @@ use veoveo_task::TaskRuntime;
 
 use crate::{
     bridge::Bridge,
-    editor::{self, EditorSession},
     hooks,
-    instance::Instance,
+    instance::{Admitted, Instance},
     loopback,
     mcp::{self, N8nMcp, Served},
-    n8n::{N8n, N8nClient, N8nDatabase, N8nSettings, STOP_GRACE, StateDirectory, generate_secret},
+    n8n::{N8n, N8nDatabase, N8nSettings, STOP_GRACE, StateDirectory, generate_secret},
     runs::{N8nTasks, Runner},
     store::{InstanceKeyStore, RunStore, WorkflowStore, stored_tenant},
     workflows::{self, WorkflowFile},
@@ -37,6 +37,28 @@ use crate::{
 
 use config::Args;
 use registration::Registered;
+
+/// What a runner serves, read from its checkouts before it contacts anything: the
+/// team's instance, which may use only what the n8n repository's `n8n/admitted.toml`
+/// admits, and the team's workflows. A team without `workflows/` applies none, and one
+/// whose instance names no node type and no credential uses the Veoveo nodes alone.
+pub struct Team {
+    pub admitted: Admitted,
+    pub instance: Instance,
+    pub files: Vec<WorkflowFile>,
+}
+
+/// Read the team at `instance` and `workflows`, as `admitted` admits it.
+pub fn read_team(admitted: &Path, instance: &Path, workflows: &Path) -> Result<Team> {
+    let admitted = Admitted::load(admitted)?;
+    let instance = Instance::load(instance, &admitted)?;
+    let files = workflows::read_directory(workflows)?;
+    Ok(Team {
+        admitted,
+        instance,
+        files,
+    })
+}
 
 /// What the registration issued that serving uses.
 struct Issued {
@@ -63,16 +85,21 @@ pub async fn run() -> Result<()> {
     }
     let _telemetry: TelemetryGuard =
         init_server_telemetry("veoveo-mcp-n8n", "info,veoveo_mcp_n8n=debug")?;
-    // The branch's own inputs are checked before the server contacts anything.
-    let instance = Instance::load(&args.instance)?;
-    let files = workflows::read_directory(&args.workflows)?;
-    let app = AppHtml::load(&args.editor_app)?;
+    // The team's inputs, and what the n8n repository admits them to use, are checked
+    // before the server contacts anything.
+    let Team {
+        admitted,
+        instance,
+        files,
+    } = read_team(&args.admitted, &args.instance, &args.workflows)?;
+    let app = AppHtml::load(&args.overview_app)?;
     tracing::info!(
         tenant = instance.tenant.as_str(),
         workflows = files.len(),
         nodes = instance.nodes.len(),
         credentials = instance.credentials.len(),
-        "read the branch's instance and workflows"
+        admitted_nodes = admitted.nodes.len(),
+        "read the team's instance and workflows"
     );
     let Registered {
         client,
@@ -100,7 +127,7 @@ pub async fn run() -> Result<()> {
 }
 
 /// Connect with the registration's database login, migrate the server's schema, start
-/// n8n and apply the branch's workflows, then serve and run Tasks until SIGTERM or
+/// n8n and apply the team's workflows, then serve and run Tasks until SIGTERM or
 /// Ctrl-C, until the process instance loses its lock or until n8n exits.
 async fn serve(
     args: &Args,
@@ -117,9 +144,6 @@ async fn serve(
     let public_base = registration
         .public_base()
         .context("the Hub named no public base for the server's hooks")?;
-    let app_origin = registration
-        .app_origin()
-        .context("the Hub named no app origin for n8n's editor")?;
     let store = PlatformStore::connect(
         StoreConfig::builder(grant.url.as_str(), grant.password.clone())
             .username(grant.username.as_str())
@@ -145,7 +169,8 @@ async fn serve(
 
     let schema = ServerSchema::new(&crate::server())?;
     let hooks_url = public_base.join(["hooks", ""]);
-    let editor_url = app_origin.url().clone();
+    let issuer =
+        Url::parse(registration.access_tokens().issuer.as_str()).context("the Hub's issuer URL")?;
     let state = StateDirectory::prepare(&args.n8n_state)
         .with_context(|| format!("preparing {}", args.n8n_state.display()))?;
     let settings = N8nSettings {
@@ -160,7 +185,6 @@ async fn serve(
         )?,
         schema: schema.schema().to_owned(),
         group_role: schema.group_role(),
-        editor_url: editor_url.clone(),
         webhook_url: hooks_url.clone(),
         nodes: instance.nodes.clone(),
         veoveo_nodes: std::fs::canonicalize(&args.n8n_nodes)
@@ -194,7 +218,18 @@ async fn serve(
             return Err(error);
         }
     };
-    tracing::info!(decisions = applied.len(), "applied the branch's workflows");
+    tracing::info!(decisions = applied.len(), "applied the team's workflows");
+    let started_at = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+    // Which Task's caller dispatched an execution is kept for this instance's executions
+    // while they may be read.
+    let pruned = runs.prune_dispatched(tenant, key.instance).await;
+    match pruned {
+        Ok(pruned) => tracing::info!(pruned, "pruned the dispatched executions"),
+        Err(error) => {
+            n8n.stop(STOP_GRACE).await;
+            return Err(error.into());
+        }
+    }
 
     let stop = CancellationToken::new();
     let runner = Runner {
@@ -211,21 +246,23 @@ async fn serve(
             .clone()
             .work(Some(registered.calls.clone()), stop.clone()),
     );
-    let bridge = Bridge::new(tasks.clone(), runs, tenant, Some(registered.calls.clone()));
+    let bridge = Bridge::new(
+        tasks.clone(),
+        runs.clone(),
+        tenant,
+        Some(registered.calls.clone()),
+    );
     let loopback_stop = stop.clone();
     let mut listening = tokio::spawn(loopback::serve(
         loopback::router(tasks.clone(), bridge),
         async move { loopback_stop.cancelled().await },
     ));
-    let session = Arc::new(EditorSession::new(
-        N8nClient::new(N8nSettings::base_url())?,
-        password,
-    ));
-
     let served = Served {
         tenant: instance.tenant.clone(),
-        editor_url,
         hooks_url,
+        issuer,
+        n8n_version: n8n.version().to_owned(),
+        started_at,
     };
     let client = n8n.client().clone();
     let ready_process = process.clone();
@@ -240,6 +277,8 @@ async fn serve(
         .handler(move || {
             Hosted::new(N8nMcp::new(
                 workflows.clone(),
+                runs.clone(),
+                key.instance,
                 client.clone(),
                 served.clone(),
                 app.clone(),
@@ -248,14 +287,8 @@ async fn serve(
         })
         .calls(registered.calls.clone())
         .public_routes(hooks::router(N8nSettings::base_url()))
-        .authenticated_routes(editor::router(
-            N8nSettings::base_url(),
-            session,
-            Some(app_origin.host_authority()),
-        ))
-        .app_origin(Some(app_origin.clone()))
         // The SDK's anonymous /readyz is installed only once n8n is ready and the
-        // branch's workflows are applied.
+        // team's workflows are applied.
         .readiness(move || {
             let process = ready_process.clone();
             async move { !process.is_lost() }

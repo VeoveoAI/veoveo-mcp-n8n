@@ -1,6 +1,5 @@
-//! One typed route table binds tools, reads, the editor's App, discovery, current
-//! permissions and the server's surfaces: the hooks, a public route prefix, and n8n's
-//! editor on the app origin.
+//! One typed route table binds tools, reads, the overview App, discovery, current
+//! permissions and the server's surface: the hooks, a public route prefix.
 mod app;
 mod declarations;
 mod requirements;
@@ -21,13 +20,13 @@ use veoveo_hub_sdk::{
 
 use crate::{
     bridge::BridgeTool,
-    contract::N8nPermission,
+    contract::{ExecutionAccess, ExecutionId, N8nPermission},
     hooks,
     n8n::{N8nClient, N8nError},
-    store::{StoreError, WorkflowStore, stored_tenant},
+    store::{RunStore, StoreError, WorkflowStore, stored_tenant},
 };
 
-pub use app::{EDITOR_APP_URI, editor_app};
+pub use app::{OVERVIEW_APP_URI, overview_app};
 pub use declarations::{REGISTRATION, registration};
 pub use requirements::AUTHORIZATION;
 pub use setup::N8nContract;
@@ -37,35 +36,90 @@ pub fn force_setup() {
     LazyLock::force(&SERVER_SETUP);
 }
 
-/// The one tenant the branch serves and where its public surfaces are.
+/// The one tenant the runner serves, where its public surface is and what it runs.
 #[derive(Clone)]
 pub struct Served {
     pub tenant: veoveo_types::TenantId,
-    /// The root of the server's app origin, where n8n's editor is.
-    pub editor_url: Url,
     /// The public URL of the hooks, `{public base}/hooks/`.
     pub hooks_url: Url,
+    /// The Hub's issuer, under which a person's own Computer is.
+    pub issuer: Url,
+    /// n8n's version, as its command line reports it.
+    pub n8n_version: String,
+    /// When the server applied its workflows, RFC 3339.
+    pub started_at: String,
 }
 
 #[derive(Clone)]
 pub struct N8nMcp {
     workflows: WorkflowStore,
+    runs: RunStore,
+    /// The n8n instance whose data the server keeps the key of: the dispatched
+    /// executions are recorded under it.
+    instance: uuid::Uuid,
     n8n: N8nClient,
     served: Served,
     app: AppHtml,
 }
 
+/// The Lore action whose grant on the repository shows a caller the data of executions
+/// no run of theirs started.
+const WRITE: &str = "write";
+
 impl N8nMcp {
-    pub fn new(workflows: WorkflowStore, n8n: N8nClient, served: Served, app: AppHtml) -> Self {
+    pub fn new(
+        workflows: WorkflowStore,
+        runs: RunStore,
+        instance: uuid::Uuid,
+        n8n: N8nClient,
+        served: Served,
+        app: AppHtml,
+    ) -> Self {
         Self {
             workflows,
+            runs,
+            instance,
             n8n,
             served,
             app,
         }
     }
 
-    /// The stored tenant of a caller of the branch's own tenant; another tenant's caller
+    /// Whether the caller's grant on the runner's linked repository, which the forwarded
+    /// token carries, holds `write`.
+    fn writer(identity: &HubInternalIdentity) -> bool {
+        identity.repository_grant().is_some_and(|grant| {
+            veoveo_hub_sdk::registration::RepositoryAction::parse(WRITE)
+                .is_ok_and(|write| grant.allows(&write))
+        })
+    }
+
+    /// What of `execution` the caller reads: an execution a run's Task dispatched shows
+    /// its data to that Task's caller alone; any other, a webhook's, a schedule's or a
+    /// retry's, to a writer of the repository; everyone else reads its summary.
+    async fn access(
+        &self,
+        tenant: veoveo_store::TenantId,
+        identity: &HubInternalIdentity,
+        execution: &ExecutionId,
+    ) -> Result<ExecutionAccess, McpError> {
+        let dispatched = self
+            .runs
+            .dispatched(tenant, self.instance, execution)
+            .await
+            .map_err(store_error)?;
+        let data = match dispatched {
+            Some(dispatched) => dispatched.caller == identity.actor.id.as_str(),
+            None => Self::writer(identity),
+        };
+        Ok(if data {
+            ExecutionAccess::Data
+        } else {
+            ExecutionAccess::Summary
+        })
+    }
+
+    /// The stored tenant of a caller of the runner's own tenant; another tenant's caller
     /// is refused.
     fn tenant(&self, identity: &HubInternalIdentity) -> Result<veoveo_store::TenantId, McpError> {
         if identity.authority.tenant != self.served.tenant {
@@ -85,13 +139,11 @@ fn policy(permission: N8nPermission) -> RoutePolicy {
 }
 
 static ROUTES: LazyLock<Routes<N8nMcp>> = LazyLock::new(|| {
-    let mut routes = Routes::<N8nMcp>::builder(policy(N8nPermission::WorkflowsRead))
-        .public_route(
-            hooks::PATH,
-            hooks::MAX_BODY_BYTES,
-            hooks::REQUESTS_PER_MINUTE,
-        )
-        .app_origin(policy(N8nPermission::Editor));
+    let mut routes = Routes::<N8nMcp>::builder(policy(N8nPermission::WorkflowsRead)).public_route(
+        hooks::PATH,
+        hooks::MAX_BODY_BYTES,
+        hooks::REQUESTS_PER_MINUTE,
+    );
     for tool in BridgeTool::ALL {
         routes = routes.uses(tool.permission());
     }

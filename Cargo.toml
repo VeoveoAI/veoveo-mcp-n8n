@@ -13,19 +13,21 @@ publish = false
 [workspace.dependencies]
 tempfile = "=3.27.0"
 # veoveo-core, pinned to one revision for every core crate: the revision the SDK pins.
-veoveo-fixtures = { git = "https://github.com/VeoveoAI/veoveo-core", rev = "4ebcf890eae077cdaf28dacdfab6650f1e5c4e30" }
-veoveo-store = { git = "https://github.com/VeoveoAI/veoveo-core", rev = "4ebcf890eae077cdaf28dacdfab6650f1e5c4e30" }
-veoveo-task = { git = "https://github.com/VeoveoAI/veoveo-core", rev = "4ebcf890eae077cdaf28dacdfab6650f1e5c4e30" }
-veoveo-types = { git = "https://github.com/VeoveoAI/veoveo-core", rev = "4ebcf890eae077cdaf28dacdfab6650f1e5c4e30" }
+veoveo-fixtures = { git = "https://github.com/VeoveoAI/veoveo-core", rev = "422dcf268d690fcbc3fee435cf9b81e7f36ffeac" }
+veoveo-store = { git = "https://github.com/VeoveoAI/veoveo-core", rev = "422dcf268d690fcbc3fee435cf9b81e7f36ffeac" }
+veoveo-task = { git = "https://github.com/VeoveoAI/veoveo-core", rev = "422dcf268d690fcbc3fee435cf9b81e7f36ffeac" }
+veoveo-types = { git = "https://github.com/VeoveoAI/veoveo-core", rev = "422dcf268d690fcbc3fee435cf9b81e7f36ffeac" }
 # The Rust SDK for Veoveo MCP servers: the contract feature for declarations, the server
 # feature for hosting, registration, the forwarded identity and the server's surfaces.
-veoveo-hub-sdk = { git = "https://github.com/VeoveoAI/veoveo-hub-sdk", rev = "7459481c6c53258296e3e96682fdfc1e4ac1e68a", default-features = false }
+veoveo-hub-sdk = { git = "https://github.com/VeoveoAI/veoveo-hub-sdk", rev = "7360c0f96cb616c519d27256df214ff4f2e6e831", default-features = false }
 
 anyhow = "=1.0.104"
 # The SDK's router; the server's own routes, such as the hooks, are axum routers.
 axum = "0.8.9"
 # n8n's executions cursor; the release veoveo-core pins.
 base64 = "=0.23.1"
+# When the server applied its workflows; the release veoveo-core pins.
+chrono = { version = "=0.4.45", default-features = false, features = ["clock", "std"] }
 # n8n's owner password reaches n8n only as its bcrypt hash.
 bcrypt = "=0.19.3"
 clap = { version = "4.6.7", features = ["derive", "env"] }

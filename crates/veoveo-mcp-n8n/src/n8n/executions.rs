@@ -81,12 +81,42 @@ impl N8nExecution {
 
     /// n8n's error message, when the execution failed.
     pub fn error(&self) -> Option<String> {
-        let error = self.data.as_ref()?.get("resultData")?.get("error")?;
+        let error = self.failure()?;
         error
             .get("message")
             .and_then(Value::as_str)
             .map(str::to_owned)
             .or_else(|| Some(error.to_string()))
+    }
+
+    /// Each node's runs, with their inputs and outputs, as n8n records them.
+    pub fn run_data(&self) -> Option<Value> {
+        self.data
+            .as_ref()?
+            .get("resultData")?
+            .get("runData")
+            .cloned()
+    }
+
+    /// The name of the node that failed, once the execution failed: the node n8n's error
+    /// names, or the last one it ran.
+    pub fn failed_node(&self) -> Option<String> {
+        let result = self.data.as_ref()?.get("resultData")?;
+        self.failure()?
+            .get("node")
+            .and_then(|node| node.get("name"))
+            .or_else(|| result.get("lastNodeExecuted"))
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+    }
+
+    /// The error n8n recorded, once the execution failed; a null one is none.
+    fn failure(&self) -> Option<&Value> {
+        self.data
+            .as_ref()?
+            .get("resultData")?
+            .get("error")
+            .filter(|error| !error.is_null())
     }
 
     /// The operation the Veoveo Trigger started this execution for, from its output.

@@ -12,7 +12,7 @@ const API_KEY_HEADER: &str = "X-N8N-API-KEY";
 const SESSION_COOKIE: &str = "n8n-auth";
 /// The label of the API key the server mints in n8n.
 pub const API_KEY_LABEL: &str = "veoveo-mcp-n8n";
-/// The scopes of the server's API key: workflows for applying the branch and executions
+/// The scopes of the server's API key: workflows for applying the team's workflows and executions
 /// for runs.
 pub const API_KEY_SCOPES: &[&str] = &[
     "workflow:create",
@@ -107,36 +107,9 @@ impl N8nWorkflow {
     }
 }
 
-/// The owner's n8n session: its `n8n-auth` cookie's value, a JWT.
+/// The owner's n8n session, its `n8n-auth` cookie's value, with which the server mints
+/// its API key.
 pub struct OwnerSession(SecretString);
-
-impl OwnerSession {
-    /// A session from an `n8n-auth` cookie's value.
-    pub fn from_cookie(value: impl Into<String>) -> Self {
-        Self(SecretString::from(value.into()))
-    }
-
-    /// The `n8n-auth` cookie's value.
-    pub fn cookie(&self) -> &SecretString {
-        &self.0
-    }
-
-    /// When the session expires, in seconds since the Unix epoch: its JWT's `exp`.
-    pub fn expires_at(&self) -> Option<u64> {
-        use base64::Engine;
-        let payload = self.0.expose_secret().split('.').nth(1)?;
-        let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
-            .decode(payload.trim_end_matches('='))
-            .ok()?;
-        serde_json::from_slice::<serde_json::Value>(&bytes)
-            .ok()?
-            .get("exp")?
-            .as_u64()
-    }
-}
-
-/// The name of n8n's session cookie.
-pub const SESSION_COOKIE_NAME: &str = SESSION_COOKIE;
 
 #[derive(Deserialize)]
 struct Data<T> {

@@ -1,7 +1,7 @@
 //! A fake n8n on loopback for the tests that do not run a real one: its public API holds
-//! one published workflow and the executions the fake's Veoveo Trigger starts, its
-//! webhook listener echoes deliveries, and its editor routes echo what a request carried.
-//! It proves the server's side of each exchange, not n8n.
+//! one published workflow and the executions the fake's Veoveo Trigger starts, stops and
+//! retries them, and its webhook listener echoes deliveries. It proves the server's side
+//! of each exchange, not n8n.
 #![allow(dead_code)]
 
 pub mod mesh;
@@ -15,7 +15,7 @@ use axum::{
     Json, Router,
     body::Bytes,
     extract::{Path, Query, State},
-    http::{HeaderMap, Method, StatusCode, Uri, header},
+    http::{HeaderMap, Method, StatusCode, header},
     response::{IntoResponse, Response},
     routing::{any, get, post},
 };
@@ -25,19 +25,14 @@ use url::Url;
 pub const API_KEY: &str = "test-api-key";
 pub const N8N_ID: &str = "Au7bKCOK5h1uXPLz";
 pub const VERSION: &str = "0190f3a2-7b1c-4d2e-8f3a-4b5c6d7e8f90";
-/// The owner session the fake's login issues: a JWT whose `exp` is in 2033.
-pub const OWNER_SESSION: &str =
-    "eyJhbGciOiJIUzI1NiJ9.eyJpZCI6Im93bmVyIiwiZXhwIjoyMDAwMDAwMDAwfQ.c2ln";
-/// The session n8n renews in an editor answer, which expires later.
-pub const RENEWED_SESSION: &str =
-    "eyJhbGciOiJIUzI1NiJ9.eyJpZCI6Im93bmVyIiwiZXhwIjoyMDAwMDAwMDAxfQ.c2ln";
 
 /// One execution the fake holds.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct FakeExecution {
     pub status: String,
     pub dispatch: Value,
     pub output: Vec<Value>,
+    pub retry_of: Option<u64>,
 }
 
 #[derive(Default)]
@@ -45,9 +40,8 @@ pub struct FakeState {
     pub executions: BTreeMap<u64, FakeExecution>,
     pub dispatches: Vec<(HeaderMap, Value)>,
     pub deliveries: Vec<(Method, String, HeaderMap, Bytes)>,
-    pub editor: Vec<(Method, String, HeaderMap)>,
-    pub logins: usize,
     pub stops: Vec<u64>,
+    pub retries: Vec<u64>,
 }
 
 #[derive(Clone)]
@@ -64,9 +58,8 @@ impl FakeN8n {
             .route("/api/v1/executions", get(executions))
             .route("/api/v1/executions/{id}", get(execution))
             .route("/api/v1/executions/{id}/stop", post(stop))
+            .route("/api/v1/executions/{id}/retry", post(retry))
             .route("/webhook/{*path}", any(webhook))
-            .route("/rest/login", post(login))
-            .fallback(editor)
             .with_state(state.clone());
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
@@ -121,8 +114,9 @@ async fn workflow(Path(id): Path<String>, headers: HeaderMap) -> (StatusCode, Js
 fn execution_json(id: u64, execution: &FakeExecution, with_data: bool) -> Value {
     let mut value = json!({
         "id": id.to_string(), "workflowId": N8N_ID, "status": execution.status,
-        "mode": "webhook", "startedAt": "2026-10-31T10:00:00.000Z", "stoppedAt": null,
-        "retryOf": null
+        "mode": if execution.retry_of.is_some() { "retry" } else { "webhook" },
+        "startedAt": "2026-10-31T10:00:00.000Z", "stoppedAt": null,
+        "retryOf": execution.retry_of.map(|of| of.to_string())
     });
     if with_data {
         value["data"] = json!({"resultData": {
@@ -230,6 +224,37 @@ async fn stop(
     }
 }
 
+/// A retry runs the execution again as a new one, which the fake settles as it was.
+async fn retry(
+    State(state): State<Arc<Mutex<FakeState>>>,
+    Path(id): Path<u64>,
+    headers: HeaderMap,
+) -> (StatusCode, Json<Value>) {
+    if !authorized(&headers) {
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(json!({"message": "unauthorized"})),
+        );
+    }
+    let mut state = state.lock().unwrap();
+    state.retries.push(id);
+    let Some(original) = state.executions.get(&id).cloned() else {
+        return (StatusCode::NOT_FOUND, Json(json!({"message": "Not Found"})));
+    };
+    let retried = state
+        .executions
+        .keys()
+        .next_back()
+        .map_or(1, |last| last + 1);
+    let execution = FakeExecution {
+        retry_of: Some(id),
+        ..original
+    };
+    let answer = execution_json(retried, &execution, false);
+    state.executions.insert(retried, execution);
+    (StatusCode::OK, Json(answer))
+}
+
 async fn webhook(
     State(state): State<Arc<Mutex<FakeState>>>,
     method: Method,
@@ -259,7 +284,7 @@ async fn webhook(
             FakeExecution {
                 status: "running".to_owned(),
                 dispatch,
-                output: Vec::new(),
+                ..FakeExecution::default()
             },
         );
         return id.to_string().into_response();
@@ -271,53 +296,6 @@ async fn webhook(
         StatusCode::OK,
         [(header::SET_COOKIE, "tracking=1")],
         Json(json!({"delivered": path, "bytes": body.len()})),
-    )
-        .into_response()
-}
-
-async fn login(State(state): State<Arc<Mutex<FakeState>>>, body: Bytes) -> Response {
-    let login: Value = serde_json::from_slice(&body).unwrap_or_default();
-    if login["emailOrLdapLoginId"] != "owner@n8n.veoveo.invalid" {
-        return StatusCode::UNAUTHORIZED.into_response();
-    }
-    state.lock().unwrap().logins += 1;
-    (
-        StatusCode::OK,
-        [(
-            header::SET_COOKIE,
-            format!(
-                "n8n-auth={OWNER_SESSION}; Max-Age=604800; Path=/; HttpOnly; Secure; SameSite=Lax"
-            ),
-        )],
-        Json(json!({"data": {"email": "owner@n8n.veoveo.invalid"}})),
-    )
-        .into_response()
-}
-
-async fn editor(
-    State(state): State<Arc<Mutex<FakeState>>>,
-    method: Method,
-    uri: Uri,
-    headers: HeaderMap,
-) -> Response {
-    let cookie = headers
-        .get(header::COOKIE)
-        .and_then(|value| value.to_str().ok())
-        .unwrap_or_default()
-        .to_owned();
-    let authorization = headers.contains_key(header::AUTHORIZATION);
-    state
-        .lock()
-        .unwrap()
-        .editor
-        .push((method.clone(), uri.to_string(), headers));
-    (
-        StatusCode::OK,
-        [
-            (header::X_FRAME_OPTIONS, "SAMEORIGIN".to_owned()),
-            (header::SET_COOKIE, format!("n8n-auth={RENEWED_SESSION}; HttpOnly")),
-        ],
-        Json(json!({"method": method.as_str(), "uri": uri.to_string(), "cookie": cookie, "authorization": authorization})),
     )
         .into_response()
 }

@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "-- Forget a workflow whose file left the team's files, once n8n's copy is archived.\nDELETE FROM n8n.applied_workflow\nWHERE tenant = $1 AND workflow = $2\n",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "80c09c13dfe8573c888e3a1f60d41a6cce2bd3a5e9c4e338d13f9d9ef58e5f48"
+}

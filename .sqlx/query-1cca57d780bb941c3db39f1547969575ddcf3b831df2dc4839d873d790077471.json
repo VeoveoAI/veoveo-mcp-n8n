@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "-- Forget the dispatched executions n8n no longer keeps, after its default pruning of 336\n-- hours, and those of another n8n instance, once at each start.\n-- veoveo: unbounded (one tenant's rows of two weeks of runs, deleted once per start)\nDELETE FROM n8n.run_execution\nWHERE tenant = $1 AND (instance_id <> $2 OR dispatched_at < now() - interval '336 hours')\n",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "1cca57d780bb941c3db39f1547969575ddcf3b831df2dc4839d873d790077471"
+}

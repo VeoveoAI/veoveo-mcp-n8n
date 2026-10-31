@@ -30,14 +30,14 @@ use veoveo_hub_sdk::{
 };
 use veoveo_mcp_n8n::{
     bridge::Bridge,
-    contract::{FileDigest, WorkflowName},
+    contract::{ExecutionId, FileDigest, WorkflowName},
     loopback,
     mcp::{AUTHORIZATION, N8nMcp, Served},
     migrator,
     n8n::{N8nClient, N8nWorkflowId, VEOVEO_RESULT, VEOVEO_TRIGGER},
     runs::{N8nTasks, Runner},
     server,
-    store::{AppliedWorkflow, RunStore, WorkflowStore, stored_tenant},
+    store::{AppliedWorkflow, Dispatched, RunStore, WorkflowStore, stored_tenant},
 };
 use veoveo_store::TenantId;
 use veoveo_task::{Instance, TaskRuntime};
@@ -230,17 +230,23 @@ pub async fn harness(granted: &[&str]) -> Harness {
         .with_api_key(SecretString::from(API_KEY));
     let served = Served {
         tenant: tenant_id,
-        editor_url: Url::parse("https://n8n.apps.veoveo.test/").unwrap(),
         hooks_url: Url::parse("https://hub.veoveo.test/instances/x/n8n/hooks/").unwrap(),
+        issuer: Url::parse(testing::TEST_ISSUER).unwrap(),
+        n8n_version: "2.46.0".to_owned(),
+        started_at: "2026-10-31T10:00:00Z".to_owned(),
     };
-    let app =
-        AppHtml::load(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/editor.html").as_ref()).unwrap();
+    let app = AppHtml::load(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/overview.html").as_ref())
+        .unwrap();
+    let instance = uuid::Uuid::now_v7();
+    let runs = RunStore::new(store.clone());
     mesh.serve(
         testing::for_domain::<N8nMcp>()
             .calls(calls.clone())
             .handler(move || {
                 Hosted::new(N8nMcp::new(
                     workflows.clone(),
+                    runs.clone(),
+                    instance,
                     client.clone(),
                     served.clone(),
                     app.clone(),
@@ -271,7 +277,7 @@ pub async fn harness(granted: &[&str]) -> Harness {
         mesh,
         calls,
         tenant,
-        instance: uuid::Uuid::now_v7(),
+        instance,
         loopback,
         listener_port,
         worker: None,
@@ -408,6 +414,19 @@ impl Harness {
         })
         .await
         .expect("the run never recorded its job")
+    }
+
+    /// The run's Task that dispatched `execution`, and its caller, as the worker recorded
+    /// them.
+    pub async fn dispatched_to(&self, execution: u64) -> Option<Dispatched> {
+        RunStore::new(self.db.server_store(&server()).await)
+            .dispatched(
+                self.tenant,
+                self.instance,
+                &ExecutionId::parse(execution.to_string()).unwrap(),
+            )
+            .await
+            .unwrap()
     }
 
     pub fn dispatch_count(&self) -> usize {

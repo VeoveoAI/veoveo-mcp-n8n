@@ -15,7 +15,6 @@ use tokio::process::Child;
 
 pub use client::{
     API_KEY_LABEL, API_KEY_SCOPES, N8nClient, N8nError, N8nWorkflow, N8nWorkflowId, OwnerSession,
-    SESSION_COOKIE_NAME,
 };
 pub use credentials::import_document;
 pub use environment::{
@@ -37,11 +36,16 @@ const IMPORT_TIMEOUT: Duration = Duration::from_secs(300);
 /// How long n8n has to stop after SIGTERM before it is killed.
 pub const STOP_GRACE: Duration = Duration::from_secs(30);
 const READINESS_POLL: Duration = Duration::from_millis(500);
+/// How long `n8n --version` may run.
+const VERSION_TIMEOUT: Duration = Duration::from_secs(60);
+/// What the status names when n8n's command line reports no version.
+pub const UNKNOWN_VERSION: &str = "unknown";
 
 /// A running n8n and the client that calls its public API with the server's key.
 pub struct N8n {
     child: Child,
     client: N8nClient,
+    version: String,
 }
 
 impl N8n {
@@ -64,6 +68,16 @@ impl N8n {
         let secrets = N8nSecrets::new(encryption_key, password)?;
         std::fs::create_dir_all(&settings.files)
             .with_context(|| format!("creating {}", settings.files.display()))?;
+        // n8n's command line reports its version while the server starts n8n.
+        let mut asked = settings.command(&secrets, &["--version"]);
+        asked
+            .stdin(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .kill_on_drop(true);
+        let version =
+            tokio::spawn(
+                async move { tokio::time::timeout(VERSION_TIMEOUT, asked.output()).await },
+            );
         let mut child = settings
             .command(&secrets, &["start"])
             .kill_on_drop(true)
@@ -73,20 +87,41 @@ impl N8n {
         let client = N8nClient::new(N8nSettings::base_url())?;
         wait_ready(&mut child, &client).await?;
         let client = api_client(&client, state, password).await?;
-        let mut n8n = Self { child, client };
+        let version = match version.await {
+            Ok(Ok(Ok(output))) if output.status.success() => reported_version(&output.stdout),
+            _ => None,
+        }
+        .unwrap_or_else(|| {
+            tracing::warn!("n8n's command line reported no version");
+            UNKNOWN_VERSION.to_owned()
+        });
+        let mut n8n = Self {
+            child,
+            client,
+            version,
+        };
         if !credentials.is_empty() {
             import_credentials(settings, &secrets, state, credentials, placeholder).await?;
         }
         if let Some(status) = n8n.child.try_wait()? {
             bail!("n8n exited with {status} during its bootstrap");
         }
-        tracing::info!(credentials = credentials.len(), "n8n is ready");
+        tracing::info!(
+            credentials = credentials.len(),
+            version = n8n.version,
+            "n8n is ready"
+        );
         Ok(n8n)
     }
 
     /// The client of n8n's public API, with the server's key.
     pub fn client(&self) -> &N8nClient {
         &self.client
+    }
+
+    /// n8n's version, as `n8n --version` reported it at start, or [`UNKNOWN_VERSION`].
+    pub fn version(&self) -> &str {
+        &self.version
     }
 
     /// Wait until n8n exits.
@@ -116,6 +151,18 @@ impl N8n {
     }
 }
 
+/// The version `n8n --version` printed: its last nonempty line, when that is a short
+/// version string.
+fn reported_version(stdout: &[u8]) -> Option<String> {
+    let text = std::str::from_utf8(stdout).ok()?;
+    let line = text.lines().map(str::trim).rfind(|line| !line.is_empty())?;
+    let plain = line.len() <= 64
+        && line
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b".-+_/ ".contains(&b));
+    plain.then(|| line.to_owned())
+}
+
 async fn wait_ready(child: &mut Child, client: &N8nClient) -> Result<()> {
     let started = tokio::time::Instant::now();
     loop {
@@ -138,7 +185,7 @@ async fn wait_ready(child: &mut Child, client: &N8nClient) -> Result<()> {
 /// The client with the server's API key: the kept one while n8n accepts it, otherwise a
 /// new one, minted as the owner and kept, in place of the keys under the server's label
 /// that n8n still holds. The disk keeps no key on first start nor in a new sandbox, and
-/// n8n refuses a kept key when the branch's data environment holds a different n8n than
+/// n8n refuses a kept key when the runner's database holds a different n8n than
 /// the sandbox's disk.
 async fn api_client(
     client: &N8nClient,
@@ -215,4 +262,21 @@ async fn import_credentials(
         "imported the instance's credentials"
     );
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn the_version_is_the_last_plain_line() {
+        assert_eq!(
+            super::reported_version(b"2.4.1\n").as_deref(),
+            Some("2.4.1")
+        );
+        assert_eq!(
+            super::reported_version(b"warning: something\n\n 2.4.1-veoveo.3 \n").as_deref(),
+            Some("2.4.1-veoveo.3")
+        );
+        assert_eq!(super::reported_version(b""), None);
+        assert_eq!(super::reported_version(b"<script>\n"), None);
+    }
 }

@@ -1,4 +1,4 @@
-//! Workflows from Lore: at each start the server reads the branch's `workflows/*.json`,
+//! Workflows from Lore: at each start the server reads the team's `workflows/*.json`,
 //! creates or updates each workflow in n8n by its file name and publishes it, archives
 //! every workflow it applied whose file is gone, and records each file's SHA-256 and the
 //! n8n version it produced. A workflow n8n refuses fails the start.
@@ -78,7 +78,7 @@ async fn carry_out(
     decision: &Decision,
     file: Option<&WorkflowFile>,
 ) -> Result<()> {
-    let file = || file.context("the decision names a file of the branch");
+    let file = || file.context("the decision names a file of the team");
     match decision {
         Decision::Create { workflow } => {
             let file = file()?;
@@ -109,7 +109,7 @@ async fn carry_out(
             if let Some(replaced) = replaced {
                 tracing::warn!(
                     workflow = %workflow, n8n_id = %n8n_id, %replaced,
-                    "the branch's file replaced a version saved in n8n; n8n's history keeps it"
+                    "the team's file replaced a version saved in n8n; n8n's history keeps it"
                 );
             }
             tracing::info!(
@@ -129,11 +129,11 @@ async fn carry_out(
         Decision::Archive { workflow, n8n_id } => {
             client.archive(n8n_id).await?;
             store.forget(tenant, workflow).await?;
-            tracing::info!(workflow = %workflow, n8n_id = %n8n_id, "archived the workflow whose file left the branch");
+            tracing::info!(workflow = %workflow, n8n_id = %n8n_id, "archived the workflow whose file left the team's files");
         }
         Decision::Forget { workflow } => {
             store.forget(tenant, workflow).await?;
-            tracing::info!(workflow = %workflow, "forgot the workflow whose file left the branch and n8n");
+            tracing::info!(workflow = %workflow, "forgot the workflow whose file left the team's files and n8n");
         }
     }
     Ok(())

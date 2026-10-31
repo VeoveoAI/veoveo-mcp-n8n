@@ -68,6 +68,20 @@ async fn a_run_completes_fails_is_cancelled_and_survives_its_worker() {
             harness.submitted(&task).await,
             format!("{}:{execution}", harness.instance)
         );
+        // Only the Task's caller reads the execution's data: the worker recorded who that
+        // is beside the execution.
+        let recorded = harness
+            .dispatched_to(execution)
+            .await
+            .expect("the run recorded its caller");
+        assert_eq!(
+            recorded.caller,
+            veoveo_hub_sdk::hosting::testing::principal().id.as_str()
+        );
+        assert_eq!(
+            recorded.task_id,
+            veoveo_types::TaskId::parse(&task).unwrap().as_uuid()
+        );
         // A wrong token or operation is not the run's.
         let forged = format!("{}x", callback.trim_end_matches(|c: char| c != '/'));
         assert_eq!(

@@ -1,6 +1,8 @@
-//! `n8n/instance.toml`: the one tenant the branch serves, the node types its n8n admits
-//! and the credentials it imports, each secret field naming the provider environment
-//! variable whose placeholder fills it. The file never holds a credential value.
+//! A team's `n8n/instance.toml`, from the linked repository: the one tenant the runner
+//! serves, the node types its workflows use and the credentials it imports, each secret
+//! field naming the provider environment variable whose placeholder fills it. The
+//! parent's `n8n/admitted.toml` lists the node and credential types any team may use.
+//! Neither file ever holds a credential value.
 use std::{collections::BTreeMap, fmt, path::Path};
 
 use serde::Deserialize;
@@ -37,7 +39,7 @@ pub enum InstanceError {
         path: String,
         source: Box<toml::de::Error>,
     },
-    #[error("the instance admits no node type; name each one under `nodes`")]
+    #[error("n8n/admitted.toml admits no node type; name each one under `nodes`")]
     NoNodes,
     #[error("the instance admits {0}, which no instance admits")]
     ExcludedNode(NodeType),
@@ -50,15 +52,82 @@ pub enum InstanceError {
     },
     #[error("credential {credential} names no secret field")]
     NoSecret { credential: CredentialId },
+    #[error(
+        "the team's n8n/instance.toml uses the node type {0}, which the n8n repository's n8n/admitted.toml does not admit: ask its owners to admit it, or stop using it"
+    )]
+    NodeNotAdmitted(NodeType),
+    #[error(
+        "the team's credential {credential} is of type {credential_type}, which the n8n repository's n8n/admitted.toml does not admit: ask its owners to admit it, or remove the credential"
+    )]
+    CredentialNotAdmitted {
+        credential: CredentialId,
+        credential_type: CredentialType,
+    },
+}
+
+/// What the parent's `n8n/admitted.toml` admits: the node and credential types any team's
+/// instance may use, beside the Veoveo nodes, which every instance loads.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Admitted {
+    /// The node types a team's workflows may use.
+    pub nodes: Vec<NodeType>,
+    /// The credential types a team may import.
+    #[serde(default)]
+    pub credentials: Vec<CredentialType>,
+}
+
+impl Admitted {
+    pub fn load(path: &Path) -> Result<Self, InstanceError> {
+        let text = read(path)?;
+        Self::parse(&text).map_err(|error| located(error, path))
+    }
+
+    pub fn parse(text: &str) -> Result<Self, InstanceError> {
+        let admitted: Self = toml::from_str(text).map_err(|source| InstanceError::Parse {
+            path: "n8n/admitted.toml".to_owned(),
+            source: Box::new(source),
+        })?;
+        if admitted.nodes.is_empty() {
+            return Err(InstanceError::NoNodes);
+        }
+        if let Some(node) = admitted
+            .nodes
+            .iter()
+            .find(|node| EXCLUDED_NODES.contains(&node.as_str()))
+        {
+            return Err(InstanceError::ExcludedNode(node.clone()));
+        }
+        Ok(admitted)
+    }
+}
+
+fn read(path: &Path) -> Result<String, InstanceError> {
+    std::fs::read_to_string(path).map_err(|source| InstanceError::Read {
+        path: path.display().to_string(),
+        source,
+    })
+}
+
+fn located(error: InstanceError, path: &Path) -> InstanceError {
+    match error {
+        InstanceError::Parse { source, .. } => InstanceError::Parse {
+            path: path.display().to_string(),
+            source,
+        },
+        other => other,
+    }
 }
 
 /// The instance as `n8n/instance.toml` declares it.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Instance {
-    /// The one tenant the branch serves; a caller of another tenant is refused.
+    /// The one tenant the runner serves; a caller of another tenant is refused.
     pub tenant: TenantId,
-    /// The node types n8n loads. n8n loads no other.
+    /// The node types the team's workflows use, beside the Veoveo nodes; n8n loads no
+    /// other. A team that uses only the Veoveo nodes names none.
+    #[serde(default)]
     pub nodes: Vec<NodeType>,
     /// The credentials the server imports at every start.
     #[serde(default)]
@@ -66,18 +135,34 @@ pub struct Instance {
 }
 
 impl Instance {
-    pub fn load(path: &Path) -> Result<Self, InstanceError> {
-        let text = std::fs::read_to_string(path).map_err(|source| InstanceError::Read {
-            path: path.display().to_string(),
-            source,
-        })?;
-        Self::parse(&text).map_err(|error| match error {
-            InstanceError::Parse { source, .. } => InstanceError::Parse {
-                path: path.display().to_string(),
-                source,
-            },
-            other => other,
-        })
+    /// The team's instance at `path`, which may use only what `admitted` admits.
+    pub fn load(path: &Path, admitted: &Admitted) -> Result<Self, InstanceError> {
+        let text = read(path)?;
+        let instance = Self::parse(&text).map_err(|error| located(error, path))?;
+        instance.admitted_by(admitted)?;
+        Ok(instance)
+    }
+
+    /// Refuse a node or credential type the parent does not admit.
+    pub fn admitted_by(&self, admitted: &Admitted) -> Result<(), InstanceError> {
+        if let Some(node) = self
+            .nodes
+            .iter()
+            .find(|node| !admitted.nodes.contains(node))
+        {
+            return Err(InstanceError::NodeNotAdmitted(node.clone()));
+        }
+        if let Some(credential) = self
+            .credentials
+            .iter()
+            .find(|credential| !admitted.credentials.contains(&credential.credential_type))
+        {
+            return Err(InstanceError::CredentialNotAdmitted {
+                credential: credential.id.clone(),
+                credential_type: credential.credential_type.clone(),
+            });
+        }
+        Ok(())
     }
 
     pub fn parse(text: &str) -> Result<Self, InstanceError> {
@@ -85,9 +170,6 @@ impl Instance {
             path: "n8n/instance.toml".to_owned(),
             source: Box::new(source),
         })?;
-        if instance.nodes.is_empty() {
-            return Err(InstanceError::NoNodes);
-        }
         if let Some(node) = instance
             .nodes
             .iter()
@@ -223,13 +305,19 @@ impl fmt::Display for CredentialId {
 }
 
 /// An n8n credential type, such as `githubApi` or `oAuth2Api`.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize)]
 #[serde(try_from = "String")]
 pub struct CredentialType(String);
 
 impl CredentialType {
     pub fn as_str(&self) -> &str {
         &self.0
+    }
+}
+
+impl fmt::Display for CredentialType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
     }
 }
 
@@ -341,15 +429,58 @@ mod tests {
         let (field, variable) = slack.secrets.iter().next().unwrap();
         assert_eq!(field.keys(), ["oauthTokenData", "access_token"]);
         assert_eq!(variable.as_str(), "SLACK_ACCESS_TOKEN");
-        let empty =
-            Instance::parse("tenant = \"reference\"\nnodes = [\"n8n-nodes-base.set\"]").unwrap();
+        // A team that uses only the Veoveo nodes and imports no credential names its
+        // tenant alone.
+        let empty = Instance::parse("tenant = \"reference\"").unwrap();
+        assert!(empty.nodes.is_empty());
         assert!(empty.credentials.is_empty());
+    }
+
+    #[test]
+    fn a_team_uses_only_what_the_parent_admits() {
+        let admitted = Admitted::parse(
+            "nodes = [\"n8n-nodes-base.webhook\", \"n8n-nodes-base.set\", \"@n8n/n8n-nodes-langchain.agent\"]\ncredentials = [\"githubApi\", \"slackOAuth2Api\"]",
+        )
+        .unwrap();
+        let instance = Instance::parse(INSTANCE).unwrap();
+        instance.admitted_by(&admitted).unwrap();
+        let narrower = Admitted::parse(
+            "nodes = [\"n8n-nodes-base.webhook\", \"n8n-nodes-base.set\"]\ncredentials = [\"githubApi\", \"slackOAuth2Api\"]",
+        )
+        .unwrap();
+        let error = instance.admitted_by(&narrower).unwrap_err().to_string();
+        assert!(
+            error.contains("uses the node type @n8n/n8n-nodes-langchain.agent, which the n8n repository's n8n/admitted.toml does not admit"),
+            "{error}"
+        );
+        let no_slack = Admitted::parse(
+            "nodes = [\"n8n-nodes-base.webhook\", \"n8n-nodes-base.set\", \"@n8n/n8n-nodes-langchain.agent\"]\ncredentials = [\"githubApi\"]",
+        )
+        .unwrap();
+        let error = instance.admitted_by(&no_slack).unwrap_err().to_string();
+        assert!(
+            error.contains("credential slackOauth00001 is of type slackOAuth2Api"),
+            "{error}"
+        );
+        // The parent admits no node an instance may never load.
+        assert!(
+            Admitted::parse("nodes = [\"n8n-nodes-base.executeCommand\"]")
+                .unwrap_err()
+                .to_string()
+                .contains("which no instance admits")
+        );
+        assert!(
+            Admitted::parse("nodes = []")
+                .unwrap_err()
+                .to_string()
+                .contains("admits no node type")
+        );
     }
 
     #[test]
     fn unsafe_or_malformed_instances_are_refused() {
         for (text, expected) in [
-            ("tenant = \"reference\"\nnodes = []", "admits no node"),
+            ("nodes = [\"n8n-nodes-base.set\"]", "missing field `tenant`"),
             (
                 "tenant = \"reference\"\nnodes = [\"n8n-nodes-base.executeCommand\"]",
                 "which no instance admits",

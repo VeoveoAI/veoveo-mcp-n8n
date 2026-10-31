@@ -67,8 +67,8 @@ pub enum N8nResource {
     Workflows,
     #[resource(template = "n8n://workflow/{workflow}")]
     Workflow(#[resource(variable = "workflow", codec = N8nFieldCodec)] WorkflowName),
-    #[resource(template = "n8n://editor")]
-    Editor,
+    #[resource(template = "n8n://status")]
+    Status,
     #[resource(template = "n8n://executions{?workflow,status}")]
     Executions {
         #[resource(codec = N8nFieldCodec)]
@@ -157,7 +157,7 @@ mod tests {
             "n8n://contract",
             "n8n://workflows",
             "n8n://workflow/hello-veoveo",
-            "n8n://editor",
+            "n8n://status",
             "n8n://executions",
             "n8n://executions?workflow=hello-veoveo",
             "n8n://executions?workflow=hello-veoveo&status=error",
@@ -182,7 +182,8 @@ mod tests {
             "n8n://workflow/a/b",
             "n8n://workflows?unknown=1",
             "n8n://docs/unknown",
-            "n8n://editor/extra",
+            "n8n://status/extra",
+            "n8n://editor",
             "n8n://execution/abc",
             "n8n://execution/042",
             "n8n://executions?status=succeeded",

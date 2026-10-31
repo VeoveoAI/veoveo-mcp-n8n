@@ -1,11 +1,12 @@
 //! Tenant admission is current on every exact read and collection page. Whether a
-//! workflow is active comes from n8n at the moment of the read.
+//! workflow is active comes from n8n at the moment of the read, and what of an execution
+//! its reader reads from the data rule at the moment of the read.
 use super::{N8nMcp, n8n_error, policy, store_error};
 use crate::{
     contract::{
-        EditorView, ExecutionNumber, ExecutionView, Executions, N8nPermission, N8nResource,
-        ReadEditor, ReadExecution, ReadExecutions, ReadWorkflow, ReadWorkflows, WorkflowSummary,
-        WorkflowView, Workflows,
+        AppliedFile, ExecutionNumber, ExecutionView, Executions, N8nPermission, N8nResource,
+        ReadExecution, ReadExecutions, ReadStatus, ReadWorkflow, ReadWorkflows, StatusView,
+        WorkflowSummary, WorkflowView, Workflows,
     },
     store::AppliedWorkflow,
     workflows::webhooks,
@@ -27,7 +28,7 @@ pub(super) fn register(routes: RoutesBuilder<N8nMcp>) -> RoutesBuilder<N8nMcp> {
         )
         .collection_resource::<ReadWorkflows, _, _>(
             Some(ReadWorkflows),
-            ResourceBuilder::new("The branch's workflows")
+            ResourceBuilder::new("The team's workflows")
                 .reader(read_workflows)
                 .policy(policy(N8nPermission::WorkflowsRead))
                 .cache(ReadCache::NoStore),
@@ -49,10 +50,10 @@ pub(super) fn register(routes: RoutesBuilder<N8nMcp>) -> RoutesBuilder<N8nMcp> {
                 .cache(ReadCache::NoStore),
         )
         .singleton(
-            ReadEditor,
-            ResourceBuilder::new("n8n's editor")
-                .reader(read_editor)
-                .policy(policy(N8nPermission::Editor))
+            ReadStatus,
+            ResourceBuilder::new("What this runner runs")
+                .reader(read_status)
+                .policy(policy(N8nPermission::WorkflowsRead))
                 .cache(ReadCache::NoStore),
         )
 }
@@ -120,16 +121,42 @@ async fn read_workflow(
     })
 }
 
-async fn read_editor(
+async fn read_status(
     domain: N8nMcp,
-    _: ReadEditor,
+    _: ReadStatus,
     context: RequestContext<RoleServer>,
-) -> Result<EditorView, McpError> {
+) -> Result<StatusView, McpError> {
     let identity = hub_identity(&context)?;
-    domain.tenant(&identity)?;
-    Ok(EditorView {
-        editor_url: domain.served.editor_url.to_string(),
+    let tenant = domain.tenant(&identity)?;
+    let workflows = domain
+        .workflows
+        .recorded(tenant)
+        .await
+        .map_err(store_error)?
+        .into_iter()
+        .map(|applied| AppliedFile {
+            workflow: applied.workflow,
+            file_sha256: applied.digest,
+        })
+        .collect();
+    let repository = identity
+        .repository_grant()
+        .map(|grant| grant.repository.to_string());
+    let edit_url = repository.as_ref().map(|repository| {
+        let mut url = domain.served.issuer.clone();
+        url.set_path("/computer/apps/n8n/open");
+        url.query_pairs_mut().append_pair("repository", repository);
+        url.to_string()
+    });
+    Ok(StatusView {
+        n8n_version: domain.served.n8n_version.clone(),
+        server_version: env!("CARGO_PKG_VERSION").to_owned(),
+        started_at: domain.served.started_at.clone(),
+        workflows,
         hooks_url: domain.served.hooks_url.to_string(),
+        writer: N8nMcp::writer(&identity),
+        repository,
+        edit_url,
     })
 }
 
@@ -158,7 +185,7 @@ async fn read_executions(
             .map_err(store_error)?
         {
             Some(applied) => Some(applied.n8n_id),
-            // A workflow the branch does not apply has no executions here.
+            // A workflow the team does not apply has no executions here.
             None => {
                 return pager
                     .finish(Vec::new())
@@ -184,7 +211,7 @@ async fn read_executions(
         if ExecutionNumber::of(&execution.id).is_none() {
             continue;
         }
-        items.push(super::tools::view(&domain, tenant, execution, false).await?);
+        items.push(super::tools::view(&domain, tenant, execution, None).await?);
     }
     pager
         .finish(items)
@@ -198,11 +225,12 @@ async fn read_execution(
 ) -> Result<ExecutionView, McpError> {
     let identity = hub_identity(&context)?;
     let tenant = domain.tenant(&identity)?;
+    let access = domain.access(tenant, &identity, &read.execution).await?;
     let execution = domain
         .n8n
         .execution(&read.execution, true)
         .await
         .map_err(n8n_error)?
         .ok_or_else(|| McpError::invalid_params("no such execution", None))?;
-    super::tools::view(&domain, tenant, execution, true).await
+    super::tools::view(&domain, tenant, execution, Some(access)).await
 }

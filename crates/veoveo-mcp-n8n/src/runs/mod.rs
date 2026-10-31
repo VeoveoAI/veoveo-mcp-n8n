@@ -60,7 +60,7 @@ pub struct Runner {
     pub workflows: WorkflowStore,
     pub runs: RunStore,
     pub n8n: N8nClient,
-    /// The stored identity of the branch's one tenant.
+    /// The stored identity of the runner's one tenant.
     pub tenant: veoveo_store::TenantId,
     /// The n8n instance whose data the server keeps the key of, which names each job.
     pub instance: uuid::Uuid,
@@ -116,7 +116,7 @@ impl Runner {
         else {
             return Ok(failed(
                 "workflow_not_applied",
-                format!("the branch applies no workflow {}", request.workflow),
+                format!("this team applies no workflow {}", request.workflow),
             ));
         };
         let Some(path) = trigger_path(&applied) else {
@@ -131,9 +131,16 @@ impl Runner {
             CheckSchedule::new(CHECK_FIRST, CHECK_INTERVAL, CHECK_BACKOFF, CHECK_LIMIT)?,
             RUN_TIMEOUT,
         );
+        // Only the Task's caller reads the data of the execution it dispatches.
+        let caller = self
+            .runtime
+            .owner(ctx.task_id())
+            .await?
+            .map(|owner| owner.principal_key.as_str().to_owned())
+            .context("the run's Task has no owner")?;
         let operation = ctx
             .operation(&spec)
-            .dispatch(|dispatch| self.dispatch(task_id, &request, &path, dispatch))
+            .dispatch(|dispatch| self.dispatch(task_id, &caller, &request, &path, dispatch))
             .await?;
         let execution = operation.external_id.as_ref().and_then(job::execution);
         let outcome = ctx
@@ -197,6 +204,7 @@ impl Runner {
     async fn dispatch(
         &self,
         task_id: uuid::Uuid,
+        caller: &str,
         request: &RunRequest,
         path: &str,
         dispatch: OperationDispatch,
@@ -206,6 +214,9 @@ impl Runner {
             && let Some(execution) = self.reconcile(task_id, &operation_id).await?
         {
             tracing::info!(%execution, "found the execution an earlier dispatch started");
+            self.runs
+                .record_dispatched(self.tenant, self.instance, &execution, task_id, caller)
+                .await?;
             return Ok(Submission::job(job::job(self.instance, &execution)));
         }
         let token = generate_secret()?;
@@ -232,6 +243,9 @@ impl Runner {
             .context("calling the workflow's Veoveo Trigger")?;
         self.runs
             .record_execution(self.tenant, task_id, &execution)
+            .await?;
+        self.runs
+            .record_dispatched(self.tenant, self.instance, &execution, task_id, caller)
             .await?;
         tracing::info!(workflow = %request.workflow, %execution, "dispatched the run");
         Ok(Submission::job(job::job(self.instance, &execution)))

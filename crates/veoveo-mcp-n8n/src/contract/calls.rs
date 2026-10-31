@@ -2,7 +2,7 @@
 use std::cmp::Ordering;
 
 use super::{
-    EditorView, ExecutionFilters, ExecutionId, ExecutionNumber, ExecutionView, N8nResource,
+    ExecutionFilters, ExecutionId, ExecutionNumber, ExecutionView, N8nResource, StatusView,
     WorkflowName, WorkflowSummary, WorkflowView,
 };
 use veoveo_hub_sdk::calls::ProviderContract;
@@ -15,7 +15,7 @@ impl ProviderContract for N8nProvider {
     }
 }
 
-/// The branch's workflows in ascending name order.
+/// The team's workflows in ascending name order.
 pub struct Workflows;
 impl Collection for Workflows {
     type Item = WorkflowSummary;
@@ -44,10 +44,12 @@ pub struct ReadWorkflow {
     pub workflow: WorkflowName,
 }
 
+/// What this server runs: its n8n, the workflows it applied and, for a runner, the
+/// linked repository the caller reaches it through.
 #[derive(Debug, Clone)]
 #[veoveo_hub_sdk::resource_read(provider = N8nProvider, address_type = N8nResource,
-    content = EditorView, address = N8nResource::Editor)]
-pub struct ReadEditor;
+    content = StatusView, address = N8nResource::Status)]
+pub struct ReadStatus;
 
 /// n8n's executions, newest first.
 pub struct Executions;

@@ -1,0 +1,8 @@
+# The tests' team: the tenant the tests' callers belong to, and the node types of the
+# template's examples and the tests' own workflows.
+tenant = "tenant-a"
+nodes = [
+  "n8n-nodes-base.webhook",
+  "n8n-nodes-base.set",
+  "n8n-nodes-base.wait",
+]

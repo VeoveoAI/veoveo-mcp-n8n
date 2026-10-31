@@ -1,0 +1,18 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "-- Record that a run's Task dispatched the execution, for the Task's caller. A dispatch\n-- that found the execution again records it once.\nINSERT INTO n8n.run_execution (tenant, instance_id, execution_id, task_id, caller, dispatched_at)\nVALUES ($1, $2, $3, $4, $5, now())\nON CONFLICT (tenant, instance_id, execution_id) DO NOTHING\n",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Text",
+        "Uuid",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "ebf3e2c1ce2bf4d99a6d8c85d9a4f67228c4d179e1974c4eb2ea3a7f7ef5b8df"
+}

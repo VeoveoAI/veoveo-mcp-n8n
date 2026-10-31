@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "-- Every workflow the server applied for a tenant, in name order, bounded by the most a\n-- branch holds plus one row that tells a larger set apart.\nSELECT workflow, n8n_workflow_id, file_sha256, n8n_version_id, runnable, applied\nFROM n8n.applied_workflow\nWHERE tenant = $1\nORDER BY workflow\nLIMIT $2\n",
+  "query": "-- Every workflow the server applied for a tenant, in name order, bounded by the most a\n-- team holds plus one row that tells a larger set apart.\nSELECT workflow, n8n_workflow_id, file_sha256, n8n_version_id, runnable, applied\nFROM n8n.applied_workflow\nWHERE tenant = $1\nORDER BY workflow\nLIMIT $2\n",
   "describe": {
     "columns": [
       {
@@ -85,5 +85,5 @@
       false
     ]
   },
-  "hash": "aa3b53a91716f3f51688b50c412d0b03ed67731ec4c6640c5e0ed6414a9dbcf6"
+  "hash": "53c9978b388d8d5d84a4dc5610bf91b9507bed52e093a23418e2930407b6d263"
 }

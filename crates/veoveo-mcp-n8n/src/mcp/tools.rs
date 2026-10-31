@@ -1,17 +1,16 @@
-//! The tools: `run` as an MCP Task, `retry_execution`, `stop_execution` and
-//! `editor_changes`.
+//! The tools: `run` as an MCP Task, `retry_execution` and `stop_execution`. Retrying or
+//! stopping an execution needs the data rule's access to it beside
+//! `n8n.executions.write`.
 use rmcp::{ErrorData as McpError, RoleServer, model::ClientCapabilities, service::RequestContext};
 use veoveo_hub_sdk::hosting::{RoutesBuilder, hub_identity};
 
 use super::{N8nMcp, n8n_error, policy, store_error};
 use crate::{
     contract::{
-        EditorChange, EditorChanges, EditorChangesRequest, ExecutionId, ExecutionView,
-        N8nPermission, N8nResource, RetryExecutionRequest, RunRequest, RunResult,
-        StopExecutionRequest,
+        ExecutionAccess, ExecutionId, ExecutionView, N8nPermission, N8nResource,
+        RetryExecutionRequest, RunRequest, RunResult, StopExecutionRequest,
     },
     n8n::{N8nError, N8nExecution},
-    workflows::file_members,
 };
 
 pub(super) fn register(routes: RoutesBuilder<N8nMcp>) -> RoutesBuilder<N8nMcp> {
@@ -31,19 +30,16 @@ pub(super) fn register(routes: RoutesBuilder<N8nMcp>) -> RoutesBuilder<N8nMcp> {
             policy(N8nPermission::ExecutionsWrite),
             |domain, request, context| async move { domain.stop_execution(request, context).await.map_err(Into::into) },
         )
-        .tool::<EditorChangesRequest, _, _>(
-            "List each workflow someone changed in n8n's editor since the branch applied it, with n8n's JSON of it to write to its file and push.",
-            policy(N8nPermission::WorkflowsRead),
-            |domain, request, context| async move { domain.editor_changes(request, context).await.map_err(Into::into) },
-        )
 }
 
-/// An execution as the server serves it, its workflow named by its file.
+/// An execution as the server serves it, its workflow named by its file. A listing names
+/// no `access` and carries no detail; a read of the one execution carries its failure,
+/// and its data only with [`ExecutionAccess::Data`].
 pub(super) async fn view(
     domain: &N8nMcp,
     tenant: veoveo_store::TenantId,
     execution: N8nExecution,
-    detailed: bool,
+    access: Option<ExecutionAccess>,
 ) -> Result<ExecutionView, McpError> {
     let workflow = match execution
         .workflow_id
@@ -58,10 +54,15 @@ pub(super) async fn view(
             .map(|applied| applied.workflow),
         None => None,
     };
-    let (output, error) = if detailed {
-        (execution.output(), execution.error())
-    } else {
-        (None, None)
+    let (output, run_data, failed_node, error) = match access {
+        Some(ExecutionAccess::Data) => (
+            execution.output(),
+            execution.run_data(),
+            execution.failed_node(),
+            execution.error(),
+        ),
+        Some(ExecutionAccess::Summary) => (None, None, execution.failed_node(), execution.error()),
+        None => (None, None, None, None),
     };
     Ok(ExecutionView {
         execution_uri: N8nResource::Execution(execution.id.clone()),
@@ -72,7 +73,10 @@ pub(super) async fn view(
         started_at: execution.started_at,
         stopped_at: execution.stopped_at,
         retry_of: execution.retry_of,
+        access,
         output,
+        run_data,
+        failed_node,
         error,
     })
 }
@@ -101,18 +105,40 @@ impl N8nMcp {
         ))
     }
 
+    /// `execution` as its caller reads it now.
     async fn execution_view(
         &self,
         tenant: veoveo_store::TenantId,
+        identity: &veoveo_hub_sdk::HubInternalIdentity,
         execution: &ExecutionId,
     ) -> Result<ExecutionView, McpError> {
+        let access = self.access(tenant, identity, execution).await?;
+        // The failure a summary names is in the execution's data, which the view keeps
+        // from a reader without access.
         let found = self
             .n8n
-            .execution(execution, false)
+            .execution(execution, true)
             .await
             .map_err(n8n_error)?
             .ok_or_else(|| McpError::invalid_params("no such execution", None))?;
-        view(self, tenant, found, false).await
+        view(self, tenant, found, Some(access)).await
+    }
+
+    /// Refuse to act on an execution whose data the caller may not read: a run's belongs
+    /// to its Task's caller, any other to the repository's writers.
+    async fn admit_action(
+        &self,
+        tenant: veoveo_store::TenantId,
+        identity: &veoveo_hub_sdk::HubInternalIdentity,
+        execution: &ExecutionId,
+    ) -> Result<(), McpError> {
+        if self.access(tenant, identity, execution).await? == ExecutionAccess::Data {
+            return Ok(());
+        }
+        Err(McpError::invalid_request(
+            "only the caller of the run that started this execution, or a writer of the repository for one no run started, may act on it",
+            None,
+        ))
     }
 
     async fn retry_execution(
@@ -122,16 +148,36 @@ impl N8nMcp {
     ) -> Result<ExecutionView, McpError> {
         let identity = hub_identity(&context)?;
         let tenant = self.tenant(&identity)?;
+        self.admit_action(tenant, &identity, &request.execution)
+            .await?;
+        let dispatched = self
+            .runs
+            .dispatched(tenant, self.instance, &request.execution)
+            .await
+            .map_err(store_error)?;
         let retried = self
             .n8n
             .retry_execution(&request.execution)
             .await
             .map_err(refused)?;
+        // A retry of a run's execution stays the run's caller's, who alone asked for it.
+        if let Some(dispatched) = dispatched {
+            self.runs
+                .record_dispatched(
+                    tenant,
+                    self.instance,
+                    &retried,
+                    dispatched.task_id,
+                    &dispatched.caller,
+                )
+                .await
+                .map_err(store_error)?;
+        }
         tracing::info!(
             execution = %request.execution, %retried,
             principal = identity.actor.id.as_str(), "retried an execution"
         );
-        self.execution_view(tenant, &retried).await
+        self.execution_view(tenant, &identity, &retried).await
     }
 
     async fn stop_execution(
@@ -141,6 +187,8 @@ impl N8nMcp {
     ) -> Result<ExecutionView, McpError> {
         let identity = hub_identity(&context)?;
         let tenant = self.tenant(&identity)?;
+        self.admit_action(tenant, &identity, &request.execution)
+            .await?;
         self.n8n
             .stop_execution(&request.execution)
             .await
@@ -149,45 +197,7 @@ impl N8nMcp {
             execution = %request.execution,
             principal = identity.actor.id.as_str(), "stopped an execution"
         );
-        self.execution_view(tenant, &request.execution).await
-    }
-
-    async fn editor_changes(
-        &self,
-        _request: EditorChangesRequest,
-        context: RequestContext<RoleServer>,
-    ) -> Result<EditorChanges, McpError> {
-        let identity = hub_identity(&context)?;
-        let tenant = self.tenant(&identity)?;
-        let mut workflows = Vec::new();
-        for applied in self.workflows.recorded(tenant).await.map_err(store_error)? {
-            let Some(current) = self
-                .n8n
-                .workflow(&applied.n8n_id)
-                .await
-                .map_err(n8n_error)?
-            else {
-                continue;
-            };
-            if current.version_id == applied.version {
-                continue;
-            }
-            let Some(document) = self
-                .n8n
-                .workflow_document(&applied.n8n_id)
-                .await
-                .map_err(n8n_error)?
-            else {
-                continue;
-            };
-            workflows.push(EditorChange {
-                file: format!("workflows/{}", applied.workflow.file_name()),
-                workflow: applied.workflow,
-                applied_version: applied.version.to_string(),
-                current_version: current.version_id.to_string(),
-                json: file_members(&document),
-            });
-        }
-        Ok(EditorChanges { workflows })
+        self.execution_view(tenant, &identity, &request.execution)
+            .await
     }
 }

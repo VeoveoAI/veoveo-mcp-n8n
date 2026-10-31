@@ -5,25 +5,31 @@ operational contract.
 
 ## Purpose
 
-Runs a branch's n8n workflows as a Veoveo server: `run` starts one as a Task,
-`n8n://executions` shows what happened, and the editor is an app the Hub serves from
-the server's own app origin. n8n runs beside the server in the same sandbox and reaches
-nothing except through OpenShell's proxy or through the server and the Hub.
+Runs a team's n8n workflows as a Veoveo server, as the runner of the team's link: `run`
+starts one as a Task, `n8n://executions` shows what happened, `n8n://status` what the
+runner runs, and `ui://n8n/overview` shows every team the person reaches. n8n runs beside
+the server in the same sandbox and reaches nothing except through OpenShell's proxy or
+through the server and the Hub. A runner serves no editor.
 
 ## Invariants
 
 - Owns the `n8n://` URI scheme and the PostgreSQL schema `n8n`. The server's SQL touches
   only its own tables there; n8n's `n8n_*` tables belong to n8n's migrations. Identity:
   slug `n8n`, MCP `/n8n/mcp`, port 8811.
-- n8n listens only on loopback. Only the server talks to it: through n8n's public API,
-  its webhook listener and its editor.
+- n8n listens only on loopback. Only the server talks to it, through n8n's public API
+  and its webhook listener, and only the server uses n8n's owner account.
 - n8n holds no real credential. Credentials are providers' placeholders, imported with
-  `n8n import:credentials`. A workflow file or `n8n/instance.toml` never holds a secret.
-- Workflows are named by their file under `workflows/`. Lore owns them; n8n's copy is
-  applied from the branch at every start.
+  `n8n import:credentials`. A workflow file, `n8n/instance.toml` or `n8n/admitted.toml`
+  never holds a secret.
+- Workflows are named by their file under the team repository's `workflows/`, at
+  `/sandbox/link`. Lore owns them; n8n's copy is applied from the team's files at every
+  start. The server never runs anything from `/sandbox/link`.
+- A team uses only the node and credential types `n8n/admitted.toml` admits.
+- An execution's data goes only to the caller of the run that started it or, for one no
+  run started, to a writer of the linked repository; everyone else reads its summary.
 - n8n calls into Veoveo only through the bridge, for tools in its typed table and only
   within a running run.
-- A branch serves the one tenant `n8n/instance.toml` names.
+- A runner serves the one tenant its team's `n8n/instance.toml` names.
 - n8n comes from the VeoveoAI fork at a pinned revision. Configure it here; change it only
   in the fork.
 
@@ -34,7 +40,8 @@ nothing except through OpenShell's proxy or through the server and the Hub.
   `VEOVEO_N8N_PROGRAM` names, or `n8n`, and needs port 5678 on loopback; n8n reaches the
   test's loopback listener at `VEOVEO_N8N_TEST_LOOPBACK_HOST`, `127.0.0.1` unless n8n runs
   in a container. `tests/runs.rs`, `tests/bridge.rs` and `tests/mcp.rs` use the fake n8n
-  in `tests/support`.
+  in `tests/support`; `tests/team.rs` reads the template and the teams in
+  `tests/fixtures/`.
 - `cargo test -p veoveo-mcp-n8n --no-default-features --features contract` checks the
   contract alone.
 - Every statement is a `.sql` file under `src/store/workflows/` or `src/store/runs/` run

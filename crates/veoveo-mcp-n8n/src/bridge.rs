@@ -78,7 +78,7 @@ pub enum BridgeRefusal {
     NoCalls,
 }
 
-/// The bridge of the branch's one tenant.
+/// The bridge of the runner's one tenant.
 #[derive(Clone)]
 pub struct Bridge {
     runtime: TaskRuntime,

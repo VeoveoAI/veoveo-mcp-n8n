@@ -1,15 +1,18 @@
 #!/bin/sh
 # Builds this branch, then replaces itself with the server, which starts n8n as its child.
-# The installation runs it from the branch's checkout after every fetch and supplies the
-# server's deployment, Hub and registration settings in the environment.
+# The Hub runs it once per link of the branch, from the branch's checkout, with the linked
+# team repository cloned at /sandbox/link, and supplies the server's deployment, Hub and
+# registration settings in the environment. The team's workflows and instance come from
+# the link; what a team may use, the Veoveo nodes and the overview App from this branch.
 set -e
 cargo build --locked --release --bin veoveo-mcp-n8n
 export VEOVEO_KEY_DIRECTORY=/sandbox/state/keys
 export VEOVEO_N8N_STATE=/sandbox/state/n8n
 export VEOVEO_N8N_FILES=/sandbox/n8n-files
-export VEOVEO_N8N_WORKFLOWS=workflows
-export VEOVEO_N8N_INSTANCE=n8n/instance.toml
 export VEOVEO_N8N_NODES=nodes/n8n-nodes-veoveo
-export VEOVEO_N8N_EDITOR_APP=crates/veoveo-mcp-n8n/assets/editor.html
+export VEOVEO_N8N_OVERVIEW_APP=crates/veoveo-mcp-n8n/assets/overview.html
 mkdir -p "$VEOVEO_KEY_DIRECTORY"
-exec target/release/veoveo-mcp-n8n
+exec target/release/veoveo-mcp-n8n \
+    --workflows /sandbox/link/workflows \
+    --instance /sandbox/link/n8n/instance.toml \
+    --admitted n8n/admitted.toml

@@ -1,10 +1,11 @@
 # veoveo-mcp-n8n
 
-A Veoveo MCP server that runs n8n workflows. A branch holds its workflows as JSON; its
-factory sandbox runs n8n beside the server, which applies the workflows, runs them as
-durable Tasks through the Hub and serves their executions and n8n's editor. n8n stays
-contained: it reaches nothing except through OpenShell's proxy or through the server and
-the Hub.
+A Veoveo MCP server that runs teams' n8n workflows. A branch of this repository links
+each team's repository at its top level; the Hub runs one runner per link, whose factory
+sandbox runs n8n beside the server. The server applies the team's workflows, runs them as
+durable Tasks through the Hub and serves their executions, its status and an overview
+App. n8n stays contained: it reaches nothing except through OpenShell's proxy or through
+the server and the Hub, and a runner serves no editor; people edit in their own Computer.
 
 The design is in [crates/veoveo-mcp-n8n/DESIGN.md](crates/veoveo-mcp-n8n/DESIGN.md).
 
@@ -12,8 +13,8 @@ The design is in [crates/veoveo-mcp-n8n/DESIGN.md](crates/veoveo-mcp-n8n/DESIGN.
 |---|---|
 | `crates/veoveo-mcp-n8n/` | The server |
 | `nodes/n8n-nodes-veoveo/` | The Veoveo nodes for n8n: Veoveo Trigger, Veoveo Result and Veoveo Tool |
-| `workflows/` | The branch's workflows |
-| `n8n/instance.toml` | The tenant, the credential map and the admitted node and credential types |
+| `n8n/admitted.toml` | The node and credential types any team may use |
+| `templates/team/` | The template of a team's repository: `workflows/`, `n8n/instance.toml`, `openshell/providers.yaml` and `openshell/policy.yaml` |
 | `openshell/` | The factory layout |
 
 ## License

@@ -1,4 +1,4 @@
-//! The branch's `workflows/`: one JSON file per workflow, in the form n8n exports it,
+//! The team's `workflows/`: one JSON file per workflow, in the form n8n exports it,
 //! named by its file. The server sends n8n the members of the public API's write shape
 //! and leaves the members n8n sets itself.
 use std::path::Path;

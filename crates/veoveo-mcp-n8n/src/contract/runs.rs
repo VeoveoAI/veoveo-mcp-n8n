@@ -1,5 +1,5 @@
-//! Runs and executions: the arguments of `run`, `retry_execution`, `stop_execution` and
-//! `editor_changes`, what they return, and an n8n execution as the server serves it.
+//! Runs and executions: the arguments of `run`, `retry_execution` and `stop_execution`,
+//! what they return, and an n8n execution as the server serves it.
 use std::{borrow::Cow, fmt, str::FromStr};
 
 use schemars::{JsonSchema, Schema, SchemaGenerator, json_schema};
@@ -59,34 +59,6 @@ pub struct RetryExecutionRequest {
 pub struct StopExecutionRequest {
     /// The running or waiting execution to stop.
     pub execution: ExecutionId,
-}
-
-/// The arguments of `editor_changes`: none.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-#[veoveo_hub_sdk::tool(provider = super::N8nProvider, output = EditorChanges, name = "editor_changes")]
-pub struct EditorChangesRequest {}
-
-/// Every workflow whose n8n version differs from the one the server applied.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-#[derive(veoveo_hub_sdk::SingleOutput)]
-pub struct EditorChanges {
-    pub workflows: Vec<EditorChange>,
-}
-
-/// One workflow someone changed in n8n's editor since the server applied the branch.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct EditorChange {
-    pub workflow: WorkflowName,
-    /// The file to write: `workflows/{workflow}.json`.
-    pub file: String,
-    /// The n8n version the server applied and the one n8n holds now.
-    pub applied_version: String,
-    pub current_version: String,
-    /// n8n's copy, in the members a workflow file holds.
-    pub json: serde_json::Value,
 }
 
 /// Where an n8n execution stands.
@@ -168,7 +140,7 @@ pub struct ExecutionView {
     pub execution: ExecutionId,
     /// `n8n://execution/{execution_id}`.
     pub execution_uri: N8nResource,
-    /// The workflow, when the branch's file names it.
+    /// The workflow, when the team's file names it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workflow: Option<WorkflowName>,
     pub status: ExecutionStatus,
@@ -181,12 +153,33 @@ pub struct ExecutionView {
     /// The execution this one retries.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub retry_of: Option<ExecutionId>,
-    /// The output's items, once it succeeded, in a read of the one execution.
+    /// Whether the caller reads the execution's data, in a read of the one execution: a
+    /// run's to its Task's caller, a webhook's or a schedule's to a writer of the
+    /// repository, and to everyone else its status, timing and failure alone.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub access: Option<ExecutionAccess>,
+    /// The output's items, once it succeeded, with the execution's data.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub output: Option<Vec<serde_json::Value>>,
-    /// n8n's error, once it failed, in a read of the one execution.
+    /// Each node's inputs and outputs as n8n ran them, with the execution's data.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_data: Option<serde_json::Value>,
+    /// The node that failed, once it failed, in a read of the one execution.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failed_node: Option<String>,
+    /// n8n's error message, once it failed, in a read of the one execution.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+}
+
+/// What of an execution its reader reads.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum ExecutionAccess {
+    /// Its data: node inputs and outputs and its result.
+    Data,
+    /// Its status, timing, the failing node's name and the error's message alone.
+    Summary,
 }
 
 /// The filters of the executions listing.

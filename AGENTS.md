@@ -17,6 +17,8 @@ own rules are in [`crates/veoveo-mcp-n8n/AGENTS.md`](crates/veoveo-mcp-n8n/AGENT
 - The Veoveo nodes under `nodes/` are plain JavaScript that n8n loads from
   `N8N_CUSTOM_EXTENSIONS` without a build. Keep them thin: they reach the server on
   loopback and hold no logic the server owns.
-- Never put a credential value in `workflows/`, `n8n/` or the image. Name a provider's
-  environment variable instead.
+- Never put a credential value in a team's `workflows/` or `n8n/`, in `n8n/admitted.toml`,
+  in `templates/` or in the image. Name a provider's environment variable instead.
+- A team's network rules name n8n's program by its path in the image,
+  `/usr/local/bin/node`, never a glob or a path under `/sandbox/link`.
 - Commits carry no AI or tool attribution.

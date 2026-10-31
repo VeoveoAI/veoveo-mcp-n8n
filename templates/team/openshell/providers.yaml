@@ -1,0 +1,5 @@
+# The installation provider profiles this team requests. vv-factory-model is the model
+# endpoint n8n's AI nodes reach through OpenShell's proxy with its placeholder; the Hub
+# attaches it to the team's runner when the control plane grants it to this repository.
+# Integration profiles the workflows use are added here by name.
+providers: [vv-factory-model]

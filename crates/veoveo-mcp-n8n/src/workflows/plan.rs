@@ -1,4 +1,4 @@
-//! What a start does to n8n for each workflow, decided from the branch's files, what the
+//! What a start does to n8n for each workflow, decided from the team's files, what the
 //! server recorded at its last apply and what n8n holds now. The decision is pure, so it
 //! is tested apart from n8n.
 use std::collections::BTreeMap;
@@ -40,12 +40,12 @@ pub enum Decision {
         workflow: WorkflowName,
         n8n_id: N8nWorkflowId,
     },
-    /// The file left the branch: archive n8n's copy and forget it.
+    /// The file left the team's files: archive n8n's copy and forget it.
     Archive {
         workflow: WorkflowName,
         n8n_id: N8nWorkflowId,
     },
-    /// The file left the branch and n8n's copy is gone or archived: forget it.
+    /// The file left the team's files and n8n's copy is gone or archived: forget it.
     Forget { workflow: WorkflowName },
 }
 
@@ -64,8 +64,8 @@ impl Decision {
 
 /// The decisions for `files`, each workflow and the digest of its file, given what the
 /// server `recorded` and what n8n holds for each recorded workflow, `None` when n8n has
-/// no such workflow. Files come first in name order, then the workflows whose files left
-/// the branch.
+/// no such workflow. Files come first in name order, then the workflows whose files are
+/// gone.
 pub fn plan(
     files: &[(WorkflowName, FileDigest)],
     recorded: &BTreeMap<WorkflowName, Recorded>,
@@ -182,7 +182,7 @@ mod tests {
     }
 
     #[test]
-    fn a_changed_file_updates_and_an_editor_change_is_replaced() {
+    fn a_changed_file_updates_and_a_version_saved_in_n8n_is_replaced() {
         let recorded = BTreeMap::from([(name("hello"), recorded("Wf1", 1, V1))]);
         let current = BTreeMap::from([(name("hello"), found("Wf1", V1, true, false))]);
         assert_eq!(
@@ -194,7 +194,7 @@ mod tests {
                 unarchive: false
             }]
         );
-        // Someone saved the workflow in n8n's editor: the file's copy replaces theirs.
+        // A version was saved in n8n since: the file's copy replaces it.
         let edited = BTreeMap::from([(name("hello"), found("Wf1", V2, true, false))]);
         assert_eq!(
             plan(&[(name("hello"), digest(1))], &recorded, &edited),

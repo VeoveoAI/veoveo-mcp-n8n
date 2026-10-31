@@ -1,0 +1,880 @@
+<!doctype html>
+<html lang="en" data-theme="light" data-mode="inline">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>n8n</title>
+<style>
+:root {
+  --bg: var(--color-background-primary, #ffffff);
+  --bg-soft: var(--color-background-secondary, #f4f5f7);
+  --fg: var(--color-text-primary, #16181d);
+  --fg-soft: var(--color-text-secondary, #5b616e);
+  --line: var(--color-border-primary, #dfe2e7);
+  --accent: var(--color-text-info, #2557d6);
+  --danger: var(--color-text-danger, #b42318);
+  --ok: var(--color-text-success, #1a7f37);
+  --warn: var(--color-text-warning, #9a6700);
+  --radius: var(--border-radius-md, 8px);
+  --sans: var(--font-sans, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif);
+  --mono: var(--font-mono, ui-monospace, "SF Mono", Menlo, Consolas, monospace);
+  color-scheme: light;
+}
+:root[data-theme="dark"] {
+  --bg: var(--color-background-primary, #14161a);
+  --bg-soft: var(--color-background-secondary, #1d2026);
+  --fg: var(--color-text-primary, #e8eaee);
+  --fg-soft: var(--color-text-secondary, #9aa1ad);
+  --line: var(--color-border-primary, #2c3038);
+  --accent: var(--color-text-info, #7aa2ff);
+  --danger: var(--color-text-danger, #ff8a80);
+  --ok: var(--color-text-success, #5fd38a);
+  --warn: var(--color-text-warning, #e3b341);
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.45 var(--sans); }
+main { padding: 12px; display: grid; gap: 12px; }
+[data-mode="fullscreen"] body { min-height: 100vh; }
+[data-mode="fullscreen"] main { padding: 20px; max-width: 1280px; margin: 0 auto; }
+[data-mode="inline"] .full-only { display: none !important; }
+header { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+h1 { font-size: 15px; margin: 0; font-weight: 600; }
+h2 { font-size: 14px; margin: 0; font-weight: 600; }
+h3 { font-size: 12px; margin: 12px 0 6px; font-weight: 600; color: var(--fg-soft); text-transform: uppercase; letter-spacing: .04em; }
+.spacer { flex: 1; }
+section { background: var(--bg-soft); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px; min-width: 0; }
+.team-head { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+.subtle { color: var(--fg-soft); font-size: 12px; }
+.mono { font-family: var(--mono); overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th, td { text-align: left; padding: 4px 6px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { color: var(--fg-soft); font-weight: 500; }
+.scroll { overflow-x: auto; }
+.row { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+input, select, textarea, button { font: inherit; color: var(--fg); background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 4px 8px; }
+input, textarea { min-width: 0; font-family: var(--mono); }
+textarea { width: 100%; min-height: 90px; resize: vertical; }
+button { cursor: pointer; }
+button:hover:not(:disabled) { border-color: var(--fg-soft); }
+button:disabled { cursor: default; opacity: .55; }
+button.link { border: none; background: none; color: var(--accent); padding: 0 2px; }
+button.link:hover:not(:disabled) { text-decoration: underline; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+ul { margin: 0; padding: 0; list-style: none; display: grid; gap: 4px; }
+li { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+.chip { font-size: 11px; padding: 1px 6px; border-radius: 10px; border: 1px solid var(--line); color: var(--fg-soft); white-space: nowrap; }
+.chip.ok { color: var(--ok); border-color: currentColor; }
+.chip.bad { color: var(--danger); border-color: currentColor; }
+.chip.warn { color: var(--warn); border-color: currentColor; }
+.error { color: var(--danger); margin: 6px 0 0; overflow-wrap: anywhere; }
+.note { color: var(--fg-soft); font-size: 12px; margin: 6px 0 0; }
+.panel { margin-top: 10px; border-top: 1px solid var(--line); padding-top: 10px; display: grid; gap: 6px; }
+.field { display: grid; gap: 2px; }
+.field label { font-size: 12px; color: var(--fg-soft); }
+pre { margin: 0; padding: 8px; background: var(--bg); border: 1px solid var(--line); border-radius: 6px; font: 12px/1.4 var(--mono); max-height: 320px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
+dl { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 3px 12px; margin: 0; }
+dt { color: var(--fg-soft); }
+dd { margin: 0; overflow-wrap: anywhere; }
+p { margin: 6px 0 0; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>n8n</h1>
+    <span class="subtle" id="summary">Finding your teams</span>
+    <span class="spacer"></span>
+    <button type="button" class="link" id="refresh">Refresh</button>
+    <button type="button" id="mode" hidden></button>
+  </header>
+  <p class="error" id="view-error" hidden aria-live="polite"></p>
+  <section id="attention" hidden aria-labelledby="attention-title">
+    <h2 id="attention-title">Needs attention</h2>
+    <ul id="attention-list"></ul>
+  </section>
+  <div id="teams" style="display: grid; gap: 12px;"></div>
+</main>
+<script>
+"use strict";
+(() => {
+  /* Each team is a link of the n8n repository, served by its own runner. Its resources are
+     n8n://{link}/…, its run tool {link}__run. A server that is no runner names none. */
+  const APP_INFO = { name: "n8n-overview", version: "1.0.0" };
+  const APPS_PROTOCOL = "2026-01-26";
+  const DISPLAY_MODES = ["inline", "fullscreen"];
+  const STATUS_URI = /^n8n:\/\/(?:([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)\/)?status$/;
+  const REQUEST_TIMEOUT_MS = 30000;
+  const METHOD_NOT_FOUND = -32601;
+  const RECENT = 100;
+  const SHOWN_EXECUTIONS = 10;
+  const DAY_MS = 86400000;
+  const READS_AT_ONCE = 4;
+  const LIST_PAGES = 10;
+  const VEOVEO_TRIGGER = "CUSTOM.veoveoTrigger";
+  const FINAL = new Set(["success", "error", "crashed", "canceled"]);
+  const FAILED = new Set(["error", "crashed"]);
+
+  const root = document.documentElement;
+  const $ = (id) => document.getElementById(id);
+  const state = { context: {}, teams: [], initialized: false, tornDown: false, generation: 0 };
+
+  /* ---------------------------------------------------------------- bridge -- */
+
+  class BridgeError extends Error {
+    constructor(method, error) {
+      super(error && typeof error.message === "string" && error.message ? error.message : `${method} failed`);
+      this.code = error && error.code;
+    }
+  }
+
+  const pending = new Map();
+  let nextId = 1;
+
+  function post(message) {
+    window.parent.postMessage(message, "*");
+  }
+
+  function notify(method, params) {
+    if (!state.tornDown) post({ jsonrpc: "2.0", method, params });
+  }
+
+  function request(method, params) {
+    if (state.tornDown) return Promise.reject(new Error("the view has closed"));
+    const id = nextId++;
+    const promise = new Promise((resolve, reject) => {
+      const timer = setTimeout(() => { pending.delete(id); reject(new Error(`the host did not answer ${method}`)); }, REQUEST_TIMEOUT_MS);
+      pending.set(id, { method, resolve, reject, timer });
+    });
+    post({ jsonrpc: "2.0", id, method, params });
+    return promise;
+  }
+
+  window.addEventListener("message", (event) => {
+    if (event.source !== window.parent) return;
+    const message = event.data;
+    if (!message || typeof message !== "object" || message.jsonrpc !== "2.0") return;
+    if (typeof message.method === "string") {
+      if (message.id === undefined || message.id === null) onNotification(message.method, message.params || {});
+      else onRequest(message.id, message.method);
+      return;
+    }
+    const call = pending.get(message.id);
+    if (!call) return;
+    pending.delete(message.id);
+    clearTimeout(call.timer);
+    if (message.error) call.reject(new BridgeError(call.method, message.error));
+    else call.resolve(message.result);
+  });
+
+  function onRequest(id, method) {
+    if (method === "ui/resource-teardown") {
+      teardown();
+      post({ jsonrpc: "2.0", id, result: {} });
+    } else if (method === "ping") {
+      post({ jsonrpc: "2.0", id, result: {} });
+    } else {
+      post({ jsonrpc: "2.0", id, error: { code: METHOD_NOT_FOUND, message: `the n8n overview does not handle ${method}` } });
+    }
+  }
+
+  function onNotification(method, params) {
+    if (method === "ui/notifications/host-context-changed") applyHostContext(params);
+  }
+
+  async function readJson(uri) {
+    const result = await request("resources/read", { uri });
+    const contents = result && Array.isArray(result.contents) ? result.contents : [];
+    const item = contents.find((entry) => entry && entry.uri === uri && typeof entry.text === "string")
+      || contents.find((entry) => entry && typeof entry.text === "string");
+    if (!item) throw new Error(`${uri} returned no text`);
+    try {
+      return JSON.parse(item.text);
+    } catch {
+      throw new Error(`${uri} returned content that is not JSON`);
+    }
+  }
+
+  /* Every page of a collection, up to LIST_PAGES of them. */
+  async function readAll(uri) {
+    const items = [];
+    let cursor = null;
+    for (let page = 0; page < LIST_PAGES; page += 1) {
+      const separator = uri.includes("?") ? "&" : "?";
+      const read = await readJson(cursor ? `${uri}${separator}cursor=${encodeURIComponent(cursor)}` : uri);
+      if (Array.isArray(read.items)) items.push(...read.items);
+      cursor = typeof read.nextCursor === "string" ? read.nextCursor : null;
+      if (!cursor) break;
+    }
+    return items;
+  }
+
+  function toolValue(name, result) {
+    if (!result || typeof result !== "object") throw new Error(`${name} returned no result`);
+    if (result.isError) {
+      const content = Array.isArray(result.content) ? result.content : [];
+      const text = content.find((entry) => entry && entry.type === "text" && typeof entry.text === "string");
+      throw new Error(text ? text.text : `${name} failed`);
+    }
+    if (result.structuredContent && typeof result.structuredContent === "object") return result.structuredContent;
+    throw new Error(`${name} returned no structured content`);
+  }
+
+  /* At most `limit` of `jobs` at once, each a function returning a promise. */
+  async function bounded(jobs, limit) {
+    const results = new Array(jobs.length);
+    let next = 0;
+    const lanes = Array.from({ length: Math.min(limit, jobs.length) }, async () => {
+      while (next < jobs.length) {
+        const index = next++;
+        try {
+          results[index] = { value: await jobs[index]() };
+        } catch (error) {
+          results[index] = { error };
+        }
+      }
+    });
+    await Promise.all(lanes);
+    return results;
+  }
+
+  /* ------------------------------------------------------- host context -- */
+
+  function applyHostContext(update) {
+    if (!update || typeof update !== "object") return;
+    state.context = { ...state.context, ...update };
+    const context = state.context;
+    if (context.theme === "dark" || context.theme === "light") root.dataset.theme = context.theme;
+    const variables = context.styles && context.styles.variables;
+    if (variables && typeof variables === "object") {
+      for (const [name, value] of Object.entries(variables)) {
+        if (name.startsWith("--") && typeof value === "string") root.style.setProperty(name, value);
+      }
+    }
+    if (DISPLAY_MODES.includes(context.displayMode)) root.dataset.mode = context.displayMode;
+    updateModeButton();
+  }
+
+  function updateModeButton() {
+    const target = root.dataset.mode === "fullscreen" ? "inline" : "fullscreen";
+    const modes = Array.isArray(state.context.availableDisplayModes) ? state.context.availableDisplayModes : [];
+    const button = $("mode");
+    button.dataset.target = target;
+    button.textContent = target === "fullscreen" ? "Open full page" : "Back to card";
+    button.hidden = !modes.includes(target);
+  }
+
+  async function switchMode() {
+    try {
+      const result = await request("ui/request-display-mode", { mode: $("mode").dataset.target });
+      if (result && DISPLAY_MODES.includes(result.mode)) {
+        state.context.displayMode = result.mode;
+        root.dataset.mode = result.mode;
+        updateModeButton();
+      }
+    } catch (error) {
+      showError($("view-error"), `The host kept the current display: ${describe(error)}`);
+    }
+  }
+
+  let reportedHeight = 0;
+  const sizes = new ResizeObserver(() => {
+    if (!state.initialized || state.tornDown) return;
+    const height = Math.ceil(document.body.getBoundingClientRect().height);
+    if (height === reportedHeight) return;
+    reportedHeight = height;
+    notify("ui/notifications/size-changed", { height });
+  });
+
+  /* --------------------------------------------------------- formatting -- */
+
+  function describe(error) {
+    return error instanceof Error ? error.message : String(error);
+  }
+
+  function showError(node, message) {
+    node.textContent = message;
+    node.hidden = !message;
+  }
+
+  function element(tag, text, className) {
+    const node = document.createElement(tag);
+    if (text !== undefined && text !== null) node.textContent = text;
+    if (className) node.className = className;
+    return node;
+  }
+
+  function button(text, onClick, className) {
+    const node = element("button", text, className || "link");
+    node.type = "button";
+    node.addEventListener("click", onClick);
+    return node;
+  }
+
+  function chip(text, tone) {
+    return element("span", text, tone ? `chip ${tone}` : "chip");
+  }
+
+  function when(value) {
+    if (typeof value !== "string") return "";
+    const time = Date.parse(value);
+    if (Number.isNaN(time)) return value;
+    return new Date(time).toLocaleString(undefined, { timeZone: state.context.timeZone || undefined });
+  }
+
+  function lasted(execution) {
+    const start = Date.parse(execution.startedAt || "");
+    const stop = Date.parse(execution.stoppedAt || "");
+    if (Number.isNaN(start) || Number.isNaN(stop)) return "";
+    const seconds = Math.max(0, (stop - start) / 1000);
+    return seconds < 60 ? `${seconds.toFixed(1)} s` : `${Math.round(seconds / 60)} min`;
+  }
+
+  function statusTone(status) {
+    if (status === "success") return "ok";
+    if (FAILED.has(status)) return "bad";
+    if (FINAL.has(status)) return "";
+    return "warn";
+  }
+
+  /* --------------------------------------------------------------- teams -- */
+
+  function team(link) {
+    const base = link ? `n8n://${link}/` : "n8n://";
+    return {
+      link,
+      name: link || "this server",
+      base,
+      tool: link ? `${link}__run` : "run",
+      status: null,
+      workflows: [],
+      views: new Map(),
+      recent: [],
+      failures: [],
+      error: "",
+      panel: null,
+      task: null,
+    };
+  }
+
+  /* The teams the person reaches: each runner's status, as the host lists the App's own
+     server's resources for them. */
+  async function findTeams() {
+    const links = new Set();
+    let cursor;
+    for (let page = 0; page < LIST_PAGES; page += 1) {
+      const listed = await request("resources/list", cursor ? { cursor } : {});
+      for (const resource of (listed && Array.isArray(listed.resources) ? listed.resources : [])) {
+        const match = resource && typeof resource.uri === "string" && STATUS_URI.exec(resource.uri);
+        if (match) links.add(match[1] || "");
+      }
+      cursor = listed && typeof listed.nextCursor === "string" ? listed.nextCursor : undefined;
+      if (!cursor) break;
+    }
+    return [...links].sort().map(team);
+  }
+
+  async function load(entry) {
+    const [status, workflows, recent, failures] = await Promise.all([
+      readJson(`${entry.base}status`),
+      readAll(`${entry.base}workflows`),
+      readJson(`${entry.base}executions?limit=${RECENT}`),
+      readJson(`${entry.base}executions?status=error&limit=${RECENT}`),
+    ]);
+    entry.status = status;
+    entry.workflows = workflows;
+    entry.recent = Array.isArray(recent.items) ? recent.items : [];
+    const since = Date.now() - DAY_MS;
+    entry.failures = (Array.isArray(failures.items) ? failures.items : [])
+      .filter((execution) => Date.parse(execution.startedAt || "") >= since);
+    const views = await bounded(workflows.map((summary) => () => readJson(`${entry.base}workflow/${summary.workflow}`)), READS_AT_ONCE);
+    entry.views = new Map();
+    views.forEach((read, index) => {
+      if (read.value) entry.views.set(workflows[index].workflow, read.value);
+    });
+  }
+
+  async function refreshAll() {
+    const generation = ++state.generation;
+    showError($("view-error"), "");
+    $("summary").textContent = "Finding your teams";
+    let teams;
+    try {
+      teams = await findTeams();
+    } catch (error) {
+      if (generation !== state.generation) return;
+      $("summary").textContent = "";
+      showError($("view-error"), error && error.code === METHOD_NOT_FOUND
+        ? "This host does not list the server's resources to its Apps, so the overview cannot find your teams."
+        : `Your teams could not be listed: ${describe(error)}`);
+      return;
+    }
+    if (generation !== state.generation) return;
+    for (const old of state.teams) if (old.task) clearTimeout(old.task.timer);
+    state.teams = teams;
+    $("summary").textContent = teams.length
+      ? `${teams.length} team${teams.length === 1 ? "" : "s"}`
+      : "No team of the n8n repository is open to you.";
+    render();
+    await bounded(teams.map((entry) => async () => {
+      try {
+        await load(entry);
+      } catch (error) {
+        entry.error = describe(error);
+      }
+      if (generation === state.generation) render();
+    }), READS_AT_ONCE);
+  }
+
+  /* -------------------------------------------------------------- render -- */
+
+  function trigger(view) {
+    const nodes = view && view.applied && Array.isArray(view.applied.nodes) ? view.applied.nodes : [];
+    const types = nodes.map((node) => String(node.type || ""));
+    if (types.includes(VEOVEO_TRIGGER)) return "Veoveo run";
+    if (types.some((type) => type.endsWith(".webhook"))) return "Webhook";
+    if (types.some((type) => type.endsWith(".scheduleTrigger") || type.endsWith(".cron"))) return "Schedule";
+    const named = types.find((type) => /trigger$/i.test(type));
+    if (named) return named.replace(/^.*\./, "");
+    return types.some((type) => type.endsWith(".manualTrigger")) ? "Manual" : "None";
+  }
+
+  function lastRun(entry, workflow) {
+    return entry.recent.find((execution) => execution.workflow === workflow) || null;
+  }
+
+  function attention() {
+    const items = [];
+    for (const entry of state.teams) {
+      if (entry.error) {
+        items.push([entry.name, `could not be read: ${entry.error}`]);
+        continue;
+      }
+      for (const summary of entry.workflows) {
+        const last = lastRun(entry, summary.workflow);
+        const failures = entry.failures.filter((execution) => execution.workflow === summary.workflow).length;
+        if (last && FAILED.has(last.status)) items.push([`${entry.name} / ${summary.workflow}`, `its last run failed, ${when(last.startedAt)}`]);
+        else if (failures) items.push([`${entry.name} / ${summary.workflow}`, `${failures} failure${failures === 1 ? "" : "s"} in 24 h`]);
+        const kind = trigger(entry.views.get(summary.workflow));
+        if (!summary.active && kind !== "Veoveo run" && kind !== "Manual" && kind !== "None") {
+          items.push([`${entry.name} / ${summary.workflow}`, `its ${kind.toLowerCase()} trigger is not active`]);
+        }
+      }
+    }
+    $("attention").hidden = !items.length;
+    $("attention-list").replaceChildren(...items.map(([what, why]) => {
+      const item = element("li");
+      item.append(element("span", what, "mono"), element("span", why));
+      return item;
+    }));
+  }
+
+  function render() {
+    attention();
+    $("teams").replaceChildren(...state.teams.map(renderTeam));
+  }
+
+  function renderTeam(entry) {
+    const section = element("section");
+    const head = element("div", null, "team-head");
+    head.append(element("h2", entry.name));
+    const status = entry.status;
+    if (status) {
+      if (status.repository) head.append(element("span", `repository ${status.repository}`, "subtle mono"));
+      head.append(chip(status.writer ? "writer" : "reader"));
+      head.append(element("span", `n8n ${status.n8nVersion}, applied ${when(status.startedAt)}`, "subtle"));
+    }
+    section.append(head);
+    if (entry.error) {
+      section.append(element("p", `This team could not be read: ${entry.error}`, "error"));
+      return section;
+    }
+    if (!status) {
+      section.append(element("p", "Reading", "note"));
+      return section;
+    }
+    section.append(renderWorkflows(entry), renderExecutions(entry));
+    if (entry.panel) section.append(entry.panel);
+    return section;
+  }
+
+  function renderWorkflows(entry) {
+    const wrap = element("div", null, "scroll");
+    wrap.append(element("h3", "Workflows"));
+    if (!entry.workflows.length) {
+      wrap.append(element("p", "This team's repository applies no workflow.", "note"));
+      return wrap;
+    }
+    const table = element("table");
+    const head = element("tr");
+    for (const title of ["Workflow", "Trigger", "Active", "Last run", "Failures 24 h", "Webhook", ""]) head.append(element("th", title));
+    table.append(head);
+    for (const summary of entry.workflows) {
+      const view = entry.views.get(summary.workflow);
+      const last = lastRun(entry, summary.workflow);
+      const failures = entry.failures.filter((execution) => execution.workflow === summary.workflow).length;
+      const row = element("tr");
+      const lastCell = element("td");
+      if (last) lastCell.append(chip(last.status, statusTone(last.status)), element("span", ` ${when(last.startedAt)}`, "subtle"));
+      else lastCell.append(element("span", "none recent", "subtle"));
+      const hooks = element("td", null, "mono");
+      for (const hook of (view && Array.isArray(view.webhooks) ? view.webhooks : [])) {
+        hooks.append(element("div", `${hook.method ? `${hook.method} ` : ""}${hook.url}`));
+      }
+      const active = element("td");
+      active.append(chip(summary.active ? "active" : "inactive", summary.active ? "ok" : ""));
+      const actions = element("td");
+      const buttons = element("span", null, "row");
+      if (summary.runnable) buttons.append(button("Run", () => openRun(entry, summary.workflow)));
+      buttons.append(button("View", () => openView(entry, summary.workflow)));
+      if (entry.status.editUrl) buttons.append(button("Edit in my Computer", () => edit(entry, summary.workflow)));
+      actions.append(buttons);
+      row.append(
+        element("td", summary.workflow, "mono"),
+        element("td", trigger(view)),
+        active,
+        lastCell,
+        element("td", String(failures)),
+        hooks,
+        actions,
+      );
+      table.append(row);
+    }
+    wrap.append(table);
+    return wrap;
+  }
+
+  function renderExecutions(entry) {
+    const wrap = element("div", null, "scroll");
+    wrap.append(element("h3", "Recent executions"));
+    const shown = entry.recent.slice(0, SHOWN_EXECUTIONS);
+    if (!shown.length) {
+      wrap.append(element("p", "n8n holds no execution of this team's workflows.", "note"));
+      return wrap;
+    }
+    const table = element("table");
+    const head = element("tr");
+    for (const title of ["Execution", "Workflow", "Status", "Started", "Lasted", "Mode"]) head.append(element("th", title));
+    table.append(head);
+    for (const execution of shown) {
+      const row = element("tr");
+      const id = element("td");
+      id.append(button(execution.execution, () => openExecution(entry, execution.execution), "link mono"));
+      const status = element("td");
+      status.append(chip(execution.status, statusTone(execution.status)));
+      row.append(id, element("td", execution.workflow || "", "mono"), status,
+        element("td", when(execution.startedAt), "subtle"), element("td", lasted(execution), "subtle"),
+        element("td", execution.mode || "", "subtle"));
+      table.append(row);
+    }
+    wrap.append(table);
+    return wrap;
+  }
+
+  function panel(entry, title) {
+    if (entry.task) clearTimeout(entry.task.timer);
+    entry.task = null;
+    const node = element("div", null, "panel");
+    const head = element("div", null, "row");
+    head.append(element("h3", title), element("span", null, "spacer"), button("Close", () => { entry.panel = null; render(); }));
+    node.append(head);
+    entry.panel = node;
+    return node;
+  }
+
+  /* ---------------------------------------------------------------- view -- */
+
+  function openView(entry, workflow) {
+    const node = panel(entry, `${workflow}: nodes`);
+    const view = entry.views.get(workflow);
+    if (!view) {
+      node.append(element("p", "This workflow could not be read.", "error"));
+      render();
+      return;
+    }
+    const nodes = view.applied && Array.isArray(view.applied.nodes) ? view.applied.nodes : [];
+    const table = element("table");
+    const head = element("tr");
+    for (const title of ["Node", "Type", "Disabled"]) head.append(element("th", title));
+    table.append(head);
+    for (const item of nodes) {
+      const row = element("tr");
+      row.append(element("td", String(item.name || "")), element("td", String(item.type || ""), "mono"), element("td", item.disabled ? "yes" : ""));
+      table.append(row);
+    }
+    node.append(table, element("p", `File digest ${view.fileSha256}`, "subtle mono"));
+    render();
+  }
+
+  /* ----------------------------------------------------------------- run -- */
+
+  /* The Veoveo Trigger's input schema, a JSON Schema object, or none. */
+  function inputSchema(view) {
+    const nodes = view && view.applied && Array.isArray(view.applied.nodes) ? view.applied.nodes : [];
+    const triggerNode = nodes.find((node) => node.type === VEOVEO_TRIGGER);
+    let schema = triggerNode && triggerNode.parameters ? triggerNode.parameters.inputSchema : undefined;
+    if (typeof schema === "string") {
+      try { schema = JSON.parse(schema); } catch { schema = undefined; }
+    }
+    return schema && typeof schema === "object" && !Array.isArray(schema) ? schema : null;
+  }
+
+  const SIMPLE = new Set(["string", "number", "integer", "boolean"]);
+
+  function openRun(entry, workflow) {
+    const node = panel(entry, `Run ${workflow}`);
+    const schema = inputSchema(entry.views.get(workflow));
+    const properties = schema && schema.properties && typeof schema.properties === "object" ? Object.entries(schema.properties) : [];
+    const required = new Set(schema && Array.isArray(schema.required) ? schema.required : []);
+    const simple = properties.length > 0 && properties.every(([, property]) => property && SIMPLE.has(property.type));
+    const fields = [];
+    let raw = null;
+    if (simple) {
+      for (const [name, property] of properties) {
+        const field = element("div", null, "field");
+        const id = `run-${entry.link || "server"}-${name}`;
+        const label = element("label", `${name}${required.has(name) ? " (required)" : ""}${property.description ? `: ${property.description}` : ""}`);
+        label.htmlFor = id;
+        let input;
+        if (property.type === "boolean") {
+          input = element("input");
+          input.type = "checkbox";
+        } else if (Array.isArray(property.enum)) {
+          input = element("select");
+          for (const value of property.enum) input.append(element("option", String(value)));
+        } else {
+          input = element("input");
+          input.type = property.type === "string" ? "text" : "number";
+          if (property.default !== undefined) input.value = String(property.default);
+        }
+        input.id = id;
+        field.append(label, input);
+        fields.push([name, property, input]);
+        node.append(field);
+      }
+    } else {
+      const field = element("div", null, "field");
+      const label = element("label", "Input, a JSON object");
+      raw = element("textarea");
+      raw.id = `run-${entry.link || "server"}-input`;
+      raw.spellcheck = false;
+      raw.value = "{}";
+      label.htmlFor = raw.id;
+      field.append(label, raw);
+      node.append(field);
+    }
+    const status = element("p", "", "note");
+    const error = element("p", "", "error");
+    error.hidden = true;
+    const result = element("div");
+    const start = element("button", "Run");
+    start.type = "button";
+    start.addEventListener("click", () => {
+      showError(error, "");
+      let input = {};
+      try {
+        if (raw) {
+          input = JSON.parse(raw.value || "{}");
+          if (!input || typeof input !== "object" || Array.isArray(input)) throw new Error("the input is not a JSON object");
+        } else {
+          for (const [name, property, field] of fields) {
+            if (property.type === "boolean") { input[name] = field.checked; continue; }
+            if (field.value === "") {
+              if (required.has(name)) throw new Error(`${name} is required`);
+              continue;
+            }
+            input[name] = property.type === "string" ? field.value : Number(field.value);
+          }
+        }
+      } catch (problem) {
+        showError(error, describe(problem));
+        return;
+      }
+      run(entry, workflow, input, { start, status, error, result });
+    });
+    const actions = element("div", null, "row");
+    actions.append(start);
+    node.append(actions, status, error, result);
+    render();
+  }
+
+  async function run(entry, workflow, input, parts) {
+    parts.start.disabled = true;
+    parts.status.textContent = "Starting the run";
+    parts.result.replaceChildren();
+    try {
+      const reply = await request("tools/call", { name: entry.tool, arguments: { workflow, input } });
+      if (reply && reply.resultType === "task") {
+        entry.task = { taskId: reply.taskId, timer: undefined, parts };
+        showTask(entry, reply);
+        schedulePoll(entry, entry.task, reply.pollIntervalMs);
+        return;
+      }
+      finished(entry, toolValue(entry.tool, reply), parts);
+    } catch (problem) {
+      parts.status.textContent = "";
+      showError(parts.error, `The run could not start: ${describe(problem)}`);
+      parts.start.disabled = false;
+    }
+  }
+
+  function showTask(entry, task) {
+    const message = task.statusMessage ? `: ${task.statusMessage}` : "";
+    entry.task.parts.status.textContent = `Task ${task.taskId} is ${String(task.status).replace("_", " ")}${message}`;
+  }
+
+  function schedulePoll(entry, current, interval) {
+    if (entry.task !== current || state.tornDown) return;
+    const wait = Math.min(Math.max(Number(interval) || 1000, 250), 10000);
+    current.timer = setTimeout(() => poll(entry, current), wait);
+  }
+
+  async function poll(entry, current) {
+    if (entry.task !== current || state.tornDown) return;
+    let task;
+    try {
+      task = await request("tasks/get", { taskId: current.taskId });
+    } catch (problem) {
+      if (entry.task !== current) return;
+      entry.task = null;
+      showError(current.parts.error, `Task ${current.taskId} could not be read: ${describe(problem)}`);
+      current.parts.start.disabled = false;
+      return;
+    }
+    if (entry.task !== current) return;
+    showTask(entry, task);
+    if (task.status === "working" || task.status === "input_required") {
+      schedulePoll(entry, current, task.pollIntervalMs);
+      return;
+    }
+    entry.task = null;
+    current.parts.start.disabled = false;
+    if (task.status === "completed") {
+      try {
+        finished(entry, toolValue(entry.tool, task.result), current.parts);
+      } catch (problem) {
+        showError(current.parts.error, `The run failed: ${describe(problem)}`);
+      }
+    } else {
+      const reason = task.error && task.error.message ? task.error.message : task.statusMessage || "no reason given";
+      showError(current.parts.error, `The run ${task.status === "cancelled" ? "was cancelled" : "failed"}: ${reason}`);
+    }
+    reload(entry);
+  }
+
+  function finished(entry, output, parts) {
+    parts.start.disabled = false;
+    parts.status.textContent = `Execution ${output.execution} finished`;
+    const open = button("Open the execution", () => openExecution(entry, output.execution));
+    parts.result.replaceChildren(element("pre", JSON.stringify(output.output, null, 2)), open);
+  }
+
+  async function reload(entry) {
+    try {
+      await load(entry);
+      entry.error = "";
+    } catch (problem) {
+      entry.error = describe(problem);
+    }
+    render();
+  }
+
+  /* ----------------------------------------------------------- execution -- */
+
+  async function openExecution(entry, id) {
+    const node = panel(entry, `Execution ${id}`);
+    node.append(element("p", "Reading", "note"));
+    render();
+    let execution;
+    try {
+      execution = await readJson(`${entry.base}execution/${id}`);
+    } catch (problem) {
+      node.replaceChildren(node.firstChild, element("p", `The execution could not be read: ${describe(problem)}`, "error"));
+      return;
+    }
+    if (entry.panel !== node) return;
+    const facts = element("dl");
+    const fact = (name, value, mono) => {
+      if (value === undefined || value === null || value === "") return;
+      facts.append(element("dt", name), element("dd", String(value), mono ? "mono" : ""));
+    };
+    fact("Workflow", execution.workflow, true);
+    fact("Status", execution.status);
+    fact("Mode", execution.mode);
+    fact("Started", when(execution.startedAt));
+    fact("Stopped", when(execution.stoppedAt));
+    fact("Retry of", execution.retryOf, true);
+    fact("Failing node", execution.failedNode);
+    fact("Error", execution.error);
+    node.replaceChildren(node.firstChild, facts);
+    if (execution.access === "data") {
+      if (execution.output !== undefined) {
+        node.append(element("h3", "Output"), element("pre", JSON.stringify(execution.output, null, 2)));
+      }
+      if (execution.runData && typeof execution.runData === "object") {
+        node.append(element("h3", "Node data"), element("pre", JSON.stringify(execution.runData, null, 2)));
+      }
+    } else {
+      node.append(element("p", "You see this execution's summary. Its data belongs to the caller of the run that started it, or, for one no run started, to the repository's writers.", "note"));
+    }
+  }
+
+  /* ---------------------------------------------------------------- edit -- */
+
+  async function edit(entry, workflow) {
+    let url;
+    try {
+      url = new URL(entry.status.editUrl);
+      url.searchParams.set("workflow", workflow);
+    } catch {
+      showError($("view-error"), "This team names no place to edit it in your Computer.");
+      return;
+    }
+    try {
+      await request("ui/open-link", { url: url.href });
+    } catch (problem) {
+      showError($("view-error"), `Your Computer could not be opened: ${describe(problem)}`);
+    }
+  }
+
+  /* ----------------------------------------------------------- lifecycle -- */
+
+  function teardown() {
+    if (state.tornDown) return;
+    state.tornDown = true;
+    for (const entry of state.teams) if (entry.task) clearTimeout(entry.task.timer);
+    sizes.disconnect();
+    for (const call of pending.values()) clearTimeout(call.timer);
+    pending.clear();
+  }
+
+  async function start() {
+    if (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches) root.dataset.theme = "dark";
+    $("mode").addEventListener("click", switchMode);
+    $("refresh").addEventListener("click", refreshAll);
+    let initialized;
+    try {
+      initialized = await request("ui/initialize", {
+        protocolVersion: APPS_PROTOCOL,
+        appInfo: APP_INFO,
+        appCapabilities: { availableDisplayModes: DISPLAY_MODES },
+      });
+    } catch (error) {
+      showError($("view-error"), `The overview could not connect to its host: ${describe(error)}`);
+      return;
+    }
+    applyHostContext(initialized && initialized.hostContext);
+    state.initialized = true;
+    notify("ui/notifications/initialized", {});
+    sizes.observe(document.body);
+    refreshAll();
+  }
+
+  start();
+})();
+</script>
+</body>
+</html>

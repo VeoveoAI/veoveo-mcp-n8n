@@ -102,8 +102,6 @@ pub struct N8nSettings {
     /// The server's schema and its group role, which n8n's connections take.
     pub schema: String,
     pub group_role: String,
-    /// `N8N_EDITOR_BASE_URL`: the root of the server's app origin.
-    pub editor_url: Url,
     /// `N8N_WEBHOOK_URL`: the public URL of the server's hooks.
     pub webhook_url: Url,
     /// The node types the instance admits.
@@ -153,10 +151,7 @@ impl N8nSettings {
             ("N8N_PORT", PORT.to_string()),
             ("N8N_USER_FOLDER", self.user_folder.display().to_string()),
             ("N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS", "true".to_owned()),
-            ("N8N_EDITOR_BASE_URL", self.editor_url.to_string()),
             ("N8N_WEBHOOK_URL", self.webhook_url.to_string()),
-            // The Hub forwards no WebSocket upgrade on an app origin.
-            ("N8N_PUSH_BACKEND", "sse".to_owned()),
             ("N8N_INSTANCE_OWNER_MANAGED_BY_ENV", "true".to_owned()),
             ("N8N_INSTANCE_OWNER_EMAIL", OWNER_EMAIL.to_owned()),
             (
@@ -265,7 +260,6 @@ mod tests {
             database,
             schema: "n8n".to_owned(),
             group_role: "server_n8n".to_owned(),
-            editor_url: Url::parse("https://n8n.apps.veoveo.example/").unwrap(),
             webhook_url: Url::parse(
                 "https://veoveo.example/instances/019a5b30-0000-7000-8000-000000000001/n8n/hooks/",
             )
@@ -299,8 +293,6 @@ mod tests {
             ("NODE_ENV", "production"),
             ("N8N_LISTEN_ADDRESS", "127.0.0.1"),
             ("N8N_PORT", "5678"),
-            ("N8N_PUSH_BACKEND", "sse"),
-            ("N8N_EDITOR_BASE_URL", "https://n8n.apps.veoveo.example/"),
             (
                 "N8N_WEBHOOK_URL",
                 "https://veoveo.example/instances/019a5b30-0000-7000-8000-000000000001/n8n/hooks/",
@@ -358,9 +350,10 @@ mod tests {
         ] {
             assert!(excluded.iter().any(|excluded| excluded == node), "{node}");
         }
-        // n8n's path setting would move only the editor, so the server never sets it, nor
-        // the deprecated WEBHOOK_URL.
+        // The runner serves no editor, so n8n's editor and path settings stay unset, as
+        // does the deprecated WEBHOOK_URL.
         assert!(!environment.contains_key("N8N_PATH"));
+        assert!(!environment.contains_key("N8N_EDITOR_BASE_URL"));
         assert!(!environment.contains_key("WEBHOOK_URL"));
     }
 

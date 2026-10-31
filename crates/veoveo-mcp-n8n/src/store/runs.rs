@@ -50,6 +50,14 @@ pub struct RunStore {
     store: PlatformStore,
 }
 
+/// The run's Task that dispatched an execution, and the Task's caller.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Dispatched {
+    pub task_id: uuid::Uuid,
+    /// The caller's principal, as the Task's owner names it.
+    pub caller: String,
+}
+
 impl RunStore {
     pub fn new(store: PlatformStore) -> Self {
         Self { store }
@@ -127,6 +135,68 @@ impl RunStore {
         .await?
         .map(Run::try_from)
         .transpose()
+    }
+
+    /// Record that `task_id`, whose caller is `caller`, dispatched `execution` of n8n
+    /// `instance`: only that caller reads its data.
+    pub async fn record_dispatched(
+        &self,
+        tenant: TenantId,
+        instance: uuid::Uuid,
+        execution: &ExecutionId,
+        task_id: uuid::Uuid,
+        caller: &str,
+    ) -> Result<(), StoreError> {
+        sqlx::query_file!(
+            "src/store/runs/record_dispatched.sql",
+            tenant as TenantId,
+            instance,
+            execution.as_str(),
+            task_id,
+            caller,
+        )
+        .execute(self.store.pool())
+        .await?;
+        Ok(())
+    }
+
+    /// The run's Task that dispatched `execution` of n8n `instance`, and its caller, if
+    /// one did.
+    pub async fn dispatched(
+        &self,
+        tenant: TenantId,
+        instance: uuid::Uuid,
+        execution: &ExecutionId,
+    ) -> Result<Option<Dispatched>, StoreError> {
+        Ok(sqlx::query_file!(
+            "src/store/runs/dispatched.sql",
+            tenant as TenantId,
+            instance,
+            execution.as_str(),
+        )
+        .fetch_optional(self.store.pool())
+        .await?
+        .map(|row| Dispatched {
+            task_id: row.task_id,
+            caller: row.caller,
+        }))
+    }
+
+    /// Forget the dispatched executions n8n no longer keeps, after its default pruning of
+    /// 336 hours, and those of an n8n instance other than `instance`.
+    pub async fn prune_dispatched(
+        &self,
+        tenant: TenantId,
+        instance: uuid::Uuid,
+    ) -> Result<u64, StoreError> {
+        Ok(sqlx::query_file!(
+            "src/store/runs/prune_dispatched.sql",
+            tenant as TenantId,
+            instance,
+        )
+        .execute(self.store.pool())
+        .await?
+        .rows_affected())
     }
 
     /// Forget `task_id`'s run once its Task ended.

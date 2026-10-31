@@ -26,7 +26,7 @@ const TASK_TTL_MS: u64 = 7 * 24 * 60 * 60 * 1_000;
 /// How often a caller polls a run's Task.
 const TASK_POLL_INTERVAL_MS: u64 = 2_000;
 
-/// The Task service of the branch's one tenant.
+/// The Task service of the runner's one tenant.
 #[derive(Clone)]
 pub struct N8nTasks {
     runtime: TaskRuntime,
@@ -48,7 +48,7 @@ impl N8nTasks {
     }
 }
 
-/// A caller the Hub forwarded, of the branch's tenant.
+/// A caller the Hub forwarded, of the runner's tenant.
 #[derive(Clone)]
 pub struct Caller {
     identity: HubInternalIdentity,

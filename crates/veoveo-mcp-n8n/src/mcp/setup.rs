@@ -56,9 +56,11 @@ fn server_config() -> ServerConfig {
     info.capabilities = capabilities;
     info.server_info = rmcp::model::Implementation::new("n8n", env!("CARGO_PKG_VERSION"));
     info.instructions = Some(
-        "The branch's n8n workflows. List them at `n8n://workflows`, read one with its \
-         webhooks' public URLs at `n8n://workflow/{workflow}`, and find n8n's editor at \
-         `n8n://editor`. A workflow is named by its file under `workflows/`."
+        "A team's n8n workflows. List them at `n8n://workflows`, read one with its \
+         webhooks' public URLs at `n8n://workflow/{workflow}`, run one that starts with the \
+         Veoveo Trigger with `run`, and read what the runner applied at `n8n://status`. A \
+         workflow is named by its file under the team repository's `workflows/`; the \
+         overview App is `ui://n8n/overview`."
             .to_owned(),
     );
     info
@@ -76,7 +78,8 @@ mod tests {
             .collect();
         for uri in [
             "n8n://workflows",
-            "n8n://editor",
+            "n8n://status",
+            "ui://n8n/overview",
             "n8n://contract",
             "n8n://docs",
         ] {

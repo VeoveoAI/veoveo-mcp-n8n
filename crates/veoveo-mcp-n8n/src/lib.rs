@@ -1,14 +1,13 @@
 //! The n8n server's library. The `contract` feature holds the server's public types;
 //! the default `server` feature adds the hosted server, which runs n8n beside itself,
-//! applies the branch's workflows to it and serves them over MCP through the SDK.
+//! applies the linked team repository's workflows to it and serves them over MCP through
+//! the SDK.
 
 #[cfg(feature = "contract")]
 pub mod contract;
 
 #[cfg(feature = "server")]
 pub mod bridge;
-#[cfg(feature = "server")]
-pub mod editor;
 #[cfg(feature = "server")]
 pub mod hooks;
 #[cfg(feature = "server")]

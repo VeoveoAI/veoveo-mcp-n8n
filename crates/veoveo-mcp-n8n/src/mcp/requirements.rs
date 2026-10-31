@@ -13,15 +13,11 @@ pub static AUTHORIZATION: LazyLock<AuthorizationDeclaration> = LazyLock::new(|| 
 #[cfg(test)]
 mod tests {
     use crate::contract::N8nPermission;
-    use veoveo_hub_sdk::registration::RouteAccess;
 
     #[test]
-    fn the_editor_permission_admits_a_person_to_the_app_origin() {
+    fn the_routes_declare_every_permission_and_no_app_origin() {
         let authorization = &*super::AUTHORIZATION;
-        assert_eq!(
-            authorization.requirements.app_origin,
-            Some(RouteAccess::Permission(N8nPermission::Editor.name()))
-        );
+        assert_eq!(authorization.requirements.app_origin, None);
         for permission in N8nPermission::ALL {
             assert!(
                 authorization.permission(&permission.name()).is_some(),

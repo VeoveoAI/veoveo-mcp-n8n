@@ -1,0 +1,25 @@
+# This team's n8n instance. The n8n repository links this repository at the top level of
+# a branch; the runner of that link applies workflows/ to its own n8n. This file never
+# holds a credential value: each secret field of a credential names the provider
+# environment variable whose placeholder fills it.
+
+# The one tenant the team serves; a caller of another tenant is refused.
+tenant = "reference"
+
+# The node types the team's workflows use, beside the Veoveo nodes, which every runner
+# loads. Each must be one the n8n repository's n8n/admitted.toml admits; a runner whose
+# team names another refuses to start.
+nodes = [
+  "n8n-nodes-base.webhook",
+  "n8n-nodes-base.set",
+]
+
+# Credentials the runner imports at every start with `n8n import:credentials`, under the
+# same ID, so workflows name them. Their types must be admitted too. For example:
+#
+# [[credentials]]
+# id = "githubToken0001"
+# name = "GitHub"
+# type = "githubApi"
+# data = { server = "https://api.github.com", user = "veoveo" }
+# secrets = { accessToken = "GITHUB_TOKEN" }

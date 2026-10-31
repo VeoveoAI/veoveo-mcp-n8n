@@ -1,6 +1,6 @@
 //! The server's configuration. Every flag has its environment variable. The Hub
-//! issues the database login, the access-token trust, the public base and the app origin
-//! when the server registers, so none of them is configured here.
+//! issues the database login, the access-token trust and the public base when the server
+//! registers, so none of them is configured here.
 use std::path::PathBuf;
 
 use clap::Parser;
@@ -56,12 +56,24 @@ pub(super) struct Args {
         value_parser = parse_allowed_host
     )]
     pub allowed_hosts: Vec<String>,
-    /// The branch's workflows, one JSON file each.
-    #[arg(long, env = "VEOVEO_N8N_WORKFLOWS", default_value = "workflows")]
+    /// The team's workflows, one JSON file each, from the linked repository the Hub
+    /// clones at `/sandbox/link`. A missing folder holds no workflow.
+    #[arg(
+        long,
+        env = "VEOVEO_N8N_WORKFLOWS",
+        default_value = "/sandbox/link/workflows"
+    )]
     pub workflows: PathBuf,
-    /// The instance's tenant, admitted node types and credential map.
-    #[arg(long, env = "VEOVEO_N8N_INSTANCE", default_value = "n8n/instance.toml")]
+    /// The team's tenant, node types and credential map.
+    #[arg(
+        long,
+        env = "VEOVEO_N8N_INSTANCE",
+        default_value = "/sandbox/link/n8n/instance.toml"
+    )]
     pub instance: PathBuf,
+    /// The node and credential types any team may use, from this repository's checkout.
+    #[arg(long, env = "VEOVEO_N8N_ADMITTED", default_value = "n8n/admitted.toml")]
+    pub admitted: PathBuf,
     /// What the server keeps for n8n: the owner's password, the encryption key, the API
     /// key and n8n's user folder.
     #[arg(long, env = "VEOVEO_N8N_STATE", default_value = "/sandbox/state/n8n")]
@@ -76,13 +88,13 @@ pub(super) struct Args {
         default_value = "nodes/n8n-nodes-veoveo"
     )]
     pub n8n_nodes: PathBuf,
-    /// The document of the editor's App, `ui://n8n/editor`.
+    /// The document of the overview App, `ui://n8n/overview`.
     #[arg(
         long,
-        env = "VEOVEO_N8N_EDITOR_APP",
-        default_value = "crates/veoveo-mcp-n8n/assets/editor.html"
+        env = "VEOVEO_N8N_OVERVIEW_APP",
+        default_value = "crates/veoveo-mcp-n8n/assets/overview.html"
     )]
-    pub editor_app: PathBuf,
+    pub overview_app: PathBuf,
     /// n8n's command line program.
     #[arg(long, env = "VEOVEO_N8N_PROGRAM", default_value = "n8n")]
     pub n8n_program: PathBuf,
@@ -136,8 +148,12 @@ mod tests {
         .unwrap();
         assert_eq!(args.port, 8811);
         assert_eq!(args.allowed_hosts, ["vv-n8n.internal:8811"]);
-        assert_eq!(args.workflows, PathBuf::from("workflows"));
-        assert_eq!(args.instance, PathBuf::from("n8n/instance.toml"));
+        assert_eq!(args.workflows, PathBuf::from("/sandbox/link/workflows"));
+        assert_eq!(
+            args.instance,
+            PathBuf::from("/sandbox/link/n8n/instance.toml")
+        );
+        assert_eq!(args.admitted, PathBuf::from("n8n/admitted.toml"));
         assert_eq!(args.n8n_state, PathBuf::from("/sandbox/state/n8n"));
         assert!(args.public_deployment().is_ok());
     }

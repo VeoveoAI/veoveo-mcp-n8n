@@ -1,5 +1,5 @@
 //! Workflows as the server serves them: a page of the listing, one workflow as applied
-//! with its webhooks' public URLs, and the editor's address.
+//! with its webhooks' public URLs, and what the server runs.
 use std::{borrow::Cow, fmt};
 
 use schemars::{JsonSchema, Schema, SchemaGenerator, json_schema};
@@ -80,7 +80,7 @@ impl JsonSchema for FileDigest {
     }
 }
 
-/// One workflow of the branch, as the listing shows it.
+/// One workflow of the team, as the listing shows it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[derive(veoveo_hub_sdk::SingleOutput)]
@@ -124,15 +124,41 @@ pub struct WorkflowView {
     pub webhooks: Vec<WebhookView>,
 }
 
-/// Where n8n's editor and the server's public hooks are.
+/// What the server runs and applied, as `n8n://status` serves it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[derive(veoveo_hub_sdk::SingleOutput)]
-pub struct EditorView {
-    /// The editor on the server's app origin.
-    pub editor_url: String,
+pub struct StatusView {
+    /// n8n's version, as its command line reports it.
+    pub n8n_version: String,
+    /// The server's own version.
+    pub server_version: String,
+    /// When the server applied its workflows, RFC 3339.
+    pub started_at: String,
+    /// Each workflow file applied, by name, with its digest.
+    pub workflows: Vec<AppliedFile>,
     /// The public URL under which n8n's production webhooks are, `{hooksUrl}webhook/{path}`.
     pub hooks_url: String,
+    /// The linked repository the caller reaches this runner through, by its Lore ID, from
+    /// the forwarded token's repository entry; none for a server that is no runner.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repository: Option<String>,
+    /// Whether the caller's grant on that repository writes, which shows them the data of
+    /// executions no run of theirs started.
+    pub writer: bool,
+    /// Where the caller edits one of these workflows in their own Computer:
+    /// `{issuer}/computer/apps/n8n/open?repository=…`, to which a view adds
+    /// `&workflow={file}`; none for a server that is no runner.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub edit_url: Option<String>,
+}
+
+/// One workflow file the server applied.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AppliedFile {
+    pub workflow: WorkflowName,
+    pub file_sha256: FileDigest,
 }
 
 #[cfg(test)]

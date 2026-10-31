@@ -1,0 +1,19 @@
+# Network rules this team adds to its runner's policy, under the same limits as a
+# branch's. A rule names n8n's program by its path in the n8n repository's image,
+# /usr/local/bin/node, never a glob, and never a program under /sandbox/link, where this
+# repository is cloned: the Hub refuses a rule whose binary path or glob could match a
+# path there. For example, a workflow that opens issues in one GitHub repository:
+#
+# network_policies:
+#   github_issues:
+#     endpoints:
+#       - host: api.github.com
+#         port: 443
+#         protocol: rest
+#         enforcement: enforce
+#         rules:
+#           - allow: {method: POST, path: /repos/example/project/issues}
+#     binaries:
+#       - path: /usr/local/bin/node
+version: 1
+network_policies: {}

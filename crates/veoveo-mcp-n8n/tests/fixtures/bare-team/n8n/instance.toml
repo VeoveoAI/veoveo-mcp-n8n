@@ -1,0 +1,3 @@
+# A team with nothing optional: no workflows/, no node type beside the Veoveo nodes, no
+# credential and no openshell/ files.
+tenant = "tenant-a"

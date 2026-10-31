@@ -1,0 +1,3 @@
+# A team that uses a node type the n8n repository does not admit.
+tenant = "tenant-a"
+nodes = ["n8n-nodes-base.set", "n8n-nodes-base.httpRequest"]
