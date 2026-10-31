@@ -1,0 +1,38 @@
+{
+  "name": "Undeclared Tool",
+  "nodes": [
+    {
+      "id": "8c9d0e1f-2a3b-4c4d-8e5f-6a7b8c9d0e1f",
+      "name": "Veoveo Trigger",
+      "type": "CUSTOM.veoveoTrigger",
+      "typeVersion": 1,
+      "position": [0, 0],
+      "webhookId": "b1f2a3b4-c5d6-4e7f-9b8c-9d0e1f2a3b4c",
+      "parameters": {}
+    },
+    {
+      "id": "9d0e1f2a-3b4c-4d5e-9f6a-7b8c9d0e1f2a",
+      "name": "List Sources",
+      "type": "CUSTOM.veoveoTool",
+      "typeVersion": 1,
+      "position": [220, 0],
+      "parameters": {
+        "tool": "time__list_sources",
+        "arguments": "={{ {} }}"
+      }
+    },
+    {
+      "id": "a0e1f2a3-b4c5-4e6f-8a7b-8c9d0e1f2a3b",
+      "name": "Veoveo Result",
+      "type": "CUSTOM.veoveoResult",
+      "typeVersion": 1,
+      "position": [440, 0],
+      "parameters": {}
+    }
+  ],
+  "connections": {
+    "Veoveo Trigger": { "main": [[{ "node": "List Sources", "type": "main", "index": 0 }]] },
+    "List Sources": { "main": [[{ "node": "Veoveo Result", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" }
+}
