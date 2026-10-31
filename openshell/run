@@ -1,0 +1,13 @@
+#!/bin/sh
+# Builds this branch, then replaces itself with the server, which starts n8n as its child.
+# The installation runs it from the branch's checkout after every fetch and supplies the
+# server's deployment, Hub and registration settings in the environment.
+set -e
+cargo build --locked --release --bin veoveo-mcp-n8n
+export VEOVEO_KEY_DIRECTORY=/sandbox/state/keys
+export VEOVEO_N8N_STATE=/sandbox/state/n8n
+export VEOVEO_N8N_FILES=/sandbox/n8n-files
+export VEOVEO_N8N_WORKFLOWS=workflows
+export VEOVEO_N8N_INSTANCE=n8n/instance.toml
+mkdir -p "$VEOVEO_KEY_DIRECTORY"
+exec target/release/veoveo-mcp-n8n

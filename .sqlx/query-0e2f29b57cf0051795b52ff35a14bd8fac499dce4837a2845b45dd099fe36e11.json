@@ -1,0 +1,20 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "-- Record what the server applied for one workflow file: n8n's workflow, the file's\n-- SHA-256, the n8n version it produced and the JSON it sent.\nINSERT INTO n8n.applied_workflow\n    (tenant, workflow, n8n_workflow_id, file_sha256, n8n_version_id, runnable, applied, applied_at)\nVALUES ($1, $2, $3, $4, $5, $6, $7, now())\nON CONFLICT (tenant, workflow) DO UPDATE SET\n    n8n_workflow_id = EXCLUDED.n8n_workflow_id,\n    file_sha256 = EXCLUDED.file_sha256,\n    n8n_version_id = EXCLUDED.n8n_version_id,\n    runnable = EXCLUDED.runnable,\n    applied = EXCLUDED.applied,\n    applied_at = EXCLUDED.applied_at\n",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Text",
+        "Bytea",
+        "Uuid",
+        "Bool",
+        "Jsonb"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "0e2f29b57cf0051795b52ff35a14bd8fac499dce4837a2845b45dd099fe36e11"
+}

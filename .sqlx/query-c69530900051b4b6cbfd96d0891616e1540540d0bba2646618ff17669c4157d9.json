@@ -1,0 +1,90 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "-- A page of a tenant's applied workflows after a cursor's name. A separate statement\n-- for the first page keeps this bound an index condition in a cached generic plan.\nSELECT workflow, n8n_workflow_id, file_sha256, n8n_version_id, runnable, applied\nFROM n8n.applied_workflow\nWHERE tenant = $1 AND workflow > $2\nORDER BY workflow\nLIMIT $3\n",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "workflow",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "n8n.applied_workflow",
+            "name": "workflow"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "n8n_workflow_id",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "n8n.applied_workflow",
+            "name": "n8n_workflow_id"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "file_sha256",
+        "type_info": "Bytea",
+        "origin": {
+          "Table": {
+            "table": "n8n.applied_workflow",
+            "name": "file_sha256"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "n8n_version_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "n8n.applied_workflow",
+            "name": "n8n_version_id"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "runnable",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "n8n.applied_workflow",
+            "name": "runnable"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "applied",
+        "type_info": "Jsonb",
+        "origin": {
+          "Table": {
+            "table": "n8n.applied_workflow",
+            "name": "applied"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "c69530900051b4b6cbfd96d0891616e1540540d0bba2646618ff17669c4157d9"
+}

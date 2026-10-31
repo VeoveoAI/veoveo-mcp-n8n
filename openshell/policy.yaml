@@ -1,0 +1,14 @@
+# Network rules this repository adds to the installation's factory base policy. The base
+# admits only the branch's own build, /sandbox/src/**, to PostgreSQL; n8n runs as the
+# image's node, so this rule admits it to the same host and port, as the base names them.
+# n8n's own migrations and state live in the server's schema there.
+version: 1
+network_policies:
+  n8n_database:
+    endpoints:
+      - host: veoveo-postgres-rw.veoveo-system.svc.cluster.local
+        port: 5432
+        protocol: tcp
+        tls: skip
+    binaries:
+      - path: /usr/local/bin/node
