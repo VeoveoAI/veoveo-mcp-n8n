@@ -1,10 +1,11 @@
 //! n8n's editor on the server's app origin. The Hub signs a person in, checks
 //! `n8n.editor` and forwards each request with a forwarded token; the server forwards it
 //! to n8n's listener on loopback as n8n's owner. It attaches the owner's n8n session, which
-//! it keeps itself and renews before it expires, strips n8n's cookies and its
-//! `X-Frame-Options` from the answers, so the browser holds no n8n credential and the
-//! editor's App can frame the origin, and it records the person behind each request that
-//! changes n8n.
+//! it keeps itself and renews before it expires, and strips n8n's cookies from the
+//! answers, so the browser holds no n8n credential. It keeps n8n's `X-Frame-Options`:
+//! nothing frames the editor, and another server's app origin, which is same-site, must
+//! not frame it with the person's session. It records the person behind each request
+//! that changes n8n.
 use std::{
     sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
@@ -197,7 +198,6 @@ async fn forward(State(editor): State<Editor>, request: Request<Body>) -> Respon
         |answer| {
             renewed = renewed_session(answer);
             answer.remove(header::SET_COOKIE);
-            answer.remove(header::X_FRAME_OPTIONS);
         },
     )
     .await;

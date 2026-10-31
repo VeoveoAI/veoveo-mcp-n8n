@@ -78,7 +78,7 @@ The server answers these questions for a caller:
 | Resource | `n8n://executions{?workflow,status,limit,cursor}` | `n8n.workflows.read` | A page of executions |
 | Resource | `n8n://execution/{execution_id}` | `n8n.workflows.read` | One execution: status, timing, output or error |
 | App | `ui://n8n/workflow`, `ui://n8n/executions` | `n8n.workflows.read` | Interactive views of the two resources |
-| App | `ui://n8n/editor` | `n8n.editor` | n8n's editor: a view that reads `n8n://editor` and frames the editor from the server's app origin, the one origin its `csp.frameDomains` names; it asks the host for `fullscreen` |
+| App | `ui://n8n/editor` | `n8n.editor` | A self-contained launcher: it reads `n8n://editor`, shows the editor's URL and, on the person's click, opens the server's app origin top-level with MCP Apps' `ui/open-link`. It frames nothing and declares no remote origin |
 | Resource | `n8n://docs`, `n8n://docs/{doc_id}`, `n8n://contract` | `n8n.workflows.read` | The embedded documents and the contract declaration |
 
 A workflow is named by its file under `workflows/`, such as `invoice-intake` for
@@ -160,6 +160,7 @@ template.
 
 | Setting | Value | Holds |
 |---|---|---|
+| `NODE_ENV` | `production` | n8n runs as in production wherever it runs; without it n8n takes itself for a development build and drops its security headers, `X-Frame-Options` among them |
 | `N8N_LISTEN_ADDRESS`, `N8N_PORT` | `127.0.0.1`, `5678` | Only processes in the sandbox reach n8n |
 | `N8N_USER_FOLDER`, `N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS` | `/sandbox/state/n8n/home`, `true` | n8n's own settings file and folders live on the sandbox's persistent disk, readable by its user alone |
 | `N8N_EDITOR_BASE_URL`, `N8N_WEBHOOK_URL` | The registration's `veoveo_app_origin` with the root path, and `{veoveo_public_base}/hooks/` | n8n builds, shows and registers URLs on the Hub's routes; a production webhook is `{N8N_WEBHOOK_URL}webhook/{path}`. n8n 2.46 deprecates `WEBHOOK_URL` for `N8N_WEBHOOK_URL`, which sets the base of test and production webhooks alike |
@@ -338,15 +339,19 @@ versions, and the server logs each one it replaced.
 
 ## Editor
 
-The editor is the app `ui://n8n/editor`, a view that reads `n8n://editor` and frames the
-server's `authenticated_routes` from the server's app origin. The App's UI metadata names
-the registration's `veoveo_app_origin` as its one frame domain, so the server installs its
-serving routes once it registered; the declaration it registers is the same with or
-without the origin. The Hub serves that origin: it signs a person in, checks `n8n.editor`
-and forwards the browser to the selected instance through OpenShell with a forwarded
-token, with `Host` the app origin's host and without its own cookies; the browser chooses
-no target. The app origin is n8n's alone, so n8n's script reaches neither the Hub's
-origin, nor the sandbox origin of self-contained apps, nor another server's app.
+n8n's editor is a full web application on the server's app origin, and the App
+`ui://n8n/editor` is its entry point: a self-contained view that reads `n8n://editor`,
+shows the editor's URL and, when the person clicks, sends `ui/open-link` with the app
+origin's root, which the Hub admits as an open-link target only for the App's own
+server's app origin and opens top-level, in a new tab where the browser allows. A view
+never frames the editor: an App runs in a frame sandboxed `allow-scripts` alone, a nested
+frame inherits that sandbox, and a framed app origin therefore holds no session of its
+own, which the Hub's 401 to such a frame showed. The Hub serves the app origin: it signs
+a person in, checks `n8n.editor` and forwards the browser to the selected instance
+through OpenShell with a forwarded token, with `Host` the app origin's host and without
+its own cookies; the browser chooses no target. The app origin is n8n's alone, so n8n's
+script reaches neither the Hub's origin, nor the sandbox origin of self-contained apps,
+nor another server's app.
 
 The editor's routes forward every path of the app origin to n8n's listener on loopback,
 streaming both bodies, so the editor's pages, `/rest`, its assets and its server-sent
@@ -355,9 +360,11 @@ is not the editor's. The server checks `n8n.editor` again on each request. Edito
 requests act in n8n as its owner: the server signs in as the owner with the password it
 keeps, holds the session itself, renews it from n8n's answers and signs in again an hour
 before it expires or after n8n refused it, and attaches it to each forwarded request in
-place of any n8n session the browser sent. It removes the Hub's forwarded token, strips
-n8n's cookies from the answers, so the browser never holds an n8n credential, and strips
-n8n's `X-Frame-Options: SAMEORIGIN`, which would refuse the App's frame. The server
+place of any n8n session the browser sent. It removes the Hub's forwarded token and strips
+n8n's cookies from the answers, so the browser never holds an n8n credential. It keeps
+n8n's `X-Frame-Options: SAMEORIGIN`: nothing frames the editor, and another server's app
+origin is same-site, so without it that origin could frame the editor with the person's
+session. The server
 records the person behind each request that changes n8n, by the forwarded identity.
 Strict binding keeps any value typed into a credential from leaving the sandbox.
 
@@ -384,7 +391,7 @@ its owner. The server relies on them as follows.
 | Contract | Owner |
 |---|---|
 | A server declares its public routes and app origin in `veoveo_surfaces`; the registration response names the instance's `veoveo_public_base` and the server's `veoveo_app_origin`, and the Hub routes both through OpenShell's service exposure ([SDK registration](https://github.com/VeoveoAI/veoveo-hub-sdk/blob/main/crates/veoveo-hub-sdk/src/registration/DESIGN.md#surfaces)) | [Hub](https://github.com/VeoveoAI/veoveo-hub/blob/main/crates/veoveo-hub/DESIGN.md), [installation](https://github.com/VeoveoAI/veoveo-template-installation/blob/main/DESIGN.md) |
-| The Hub is the installation's MCP Apps host for browsers: `/apps/{slug}/{page}` on the public host opens `ui://{slug}/{page}` for the signed-in person's selected branch; self-contained apps run in opaque frames inside the Hub's sandbox proxy at `sandbox.apps.{public host}`; a server's `authenticated_routes` are served at the root of its own app origin, `{slug}.apps.{public host}`, with a forwarded token. One wildcard name and certificate, `*.apps.{public host}`, cover them all | [Hub](https://github.com/VeoveoAI/veoveo-hub/blob/main/crates/veoveo-hub/DESIGN.md), [SDK Apps](https://github.com/VeoveoAI/veoveo-hub-sdk/blob/main/crates/veoveo-hub-sdk/src/apps/DESIGN.md), [installation](https://github.com/VeoveoAI/veoveo-template-installation/blob/main/DESIGN.md) |
+| The Hub is the installation's MCP Apps host for browsers: `/apps/{slug}/{page}` on the public host opens `ui://{slug}/{page}` for the signed-in person's selected branch; self-contained apps run in opaque frames inside the Hub's sandbox proxy at `sandbox.apps.{public host}`; a server's `authenticated_routes` are served at the root of its own app origin, `{slug}.apps.{public host}`, with a forwarded token, and a view opens that origin top-level with `ui/open-link`, which the Hub admits as a target only for the view's own server's app origin, since a view's sandboxed frame cannot frame it with a session. One wildcard name and certificate, `*.apps.{public host}`, cover them all | [Hub](https://github.com/VeoveoAI/veoveo-hub/blob/main/crates/veoveo-hub/DESIGN.md), [SDK Apps](https://github.com/VeoveoAI/veoveo-hub-sdk/blob/main/crates/veoveo-hub-sdk/src/apps/DESIGN.md), [installation](https://github.com/VeoveoAI/veoveo-template-installation/blob/main/DESIGN.md) |
 | A branch requests installation provider profiles in `openshell/providers.yaml`; the Hub attaches those the control plane grants, with their refresh, and a person connects an account through the Hub | [Hub](https://github.com/VeoveoAI/veoveo-hub/blob/main/crates/veoveo-hub/DESIGN.md), [installation](https://github.com/VeoveoAI/veoveo-template-installation/blob/main/DESIGN.md) |
 | A factory instance reaches the model endpoint with a provider the installation attaches | [installation](https://github.com/VeoveoAI/veoveo-template-installation/blob/main/DESIGN.md) |
 | A credential-bound endpoint can bind strictly: OpenShell admits a request there only when its credential carries the bound placeholder | [OpenShell fork](https://github.com/VeoveoAI/OpenShell) |
@@ -443,5 +450,5 @@ a new sandbox.
 | `tests/runs.rs` | Through the SDK's in-process mesh and a fake n8n: a run completes from its Veoveo Result, fails and is stopped from n8n's execution through the status check, is cancelled by its caller, which stops the execution, and a restarted worker keeps waiting on the recorded execution |
 | `tests/bridge.rs` | Only table tools and only a running run's token, for the run's caller through the mesh's exchange of the run's Task; a caller without the provider's permission gets the Hub's refusal |
 | `tests/containment.rs` | n8n listens on loopback only, reads no environment or outside file, loads no excluded node, and a credential-bound endpoint refuses a value that is not its placeholder |
-| `tests/mcp.rs` | Discovery, permission refusals, the refusal of another tenant, the workflows, executions and editor resources and the editor's App through the SDK's test Hub; the hooks reach only n8n's webhooks without the server's headers, and the editor acts as n8n's owner on the app origin alone, against a fake n8n |
+| `tests/mcp.rs` | Discovery, permission refusals, the refusal of another tenant, the workflows, executions and editor resources and the editor's App through the SDK's test Hub; the hooks reach only n8n's webhooks without the server's headers, and the editor acts as n8n's owner on the app origin alone and keeps n8n's frame refusal, against a fake n8n; the editor's App opens the origin with `ui/open-link` and frames nothing |
 | `tests/database_conformance.rs`, `tests/sql_confinement.rs` | The template's checks over the server's own tables |

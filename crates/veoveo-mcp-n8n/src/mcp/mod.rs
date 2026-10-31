@@ -1,8 +1,6 @@
 //! One typed route table binds tools, reads, the editor's App, discovery, current
 //! permissions and the server's surfaces: the hooks, a public route prefix, and n8n's
-//! editor on the app origin. The App's frame domain is the app origin the registration
-//! names, so the serving table is installed once the server registered; the declaration
-//! the registration carries is the same with or without it.
+//! editor on the app origin.
 mod app;
 mod declarations;
 mod requirements;
@@ -10,7 +8,7 @@ mod resources;
 mod setup;
 mod tools;
 
-use std::sync::{LazyLock, OnceLock};
+use std::sync::LazyLock;
 
 use rmcp::ErrorData as McpError;
 use url::Url;
@@ -18,7 +16,6 @@ use veoveo_hub_sdk::{
     HubInternalIdentity,
     apps::AppHtml,
     hosting::{DomainServer, RoutePolicy, Routes},
-    registration::AppOrigin,
     server_contract::McpServerSetup,
 };
 
@@ -36,7 +33,6 @@ pub use requirements::AUTHORIZATION;
 pub use setup::N8nContract;
 use setup::SERVER_SETUP;
 
-/// Check the server's MCP setup. The serving routes must be installed first.
 pub fn force_setup() {
     LazyLock::force(&SERVER_SETUP);
 }
@@ -88,9 +84,7 @@ fn policy(permission: N8nPermission) -> RoutePolicy {
     RoutePolicy::permission(permission).expect("n8n permission")
 }
 
-/// The route table. `editor_origin` is the app origin the editor's App frames; the
-/// table declares the same surfaces and authorization without it.
-pub fn routes_for(editor_origin: Option<&AppOrigin>) -> Routes<N8nMcp> {
+static ROUTES: LazyLock<Routes<N8nMcp>> = LazyLock::new(|| {
     let mut routes = Routes::<N8nMcp>::builder(policy(N8nPermission::WorkflowsRead))
         .public_route(
             hooks::PATH,
@@ -103,19 +97,8 @@ pub fn routes_for(editor_origin: Option<&AppOrigin>) -> Routes<N8nMcp> {
     }
     let routes = tools::register(routes);
     let routes = resources::register(routes);
-    app::register(routes, editor_origin).build()
-}
-
-/// The serving routes, with the editor's frame domain once the server registered.
-static ROUTES: OnceLock<Routes<N8nMcp>> = OnceLock::new();
-
-/// Install the serving routes for the registration's app origin, before the setup is
-/// built. Fails when routes were already in use.
-pub fn install_routes(editor_origin: &AppOrigin) -> anyhow::Result<()> {
-    ROUTES
-        .set(routes_for(Some(editor_origin)))
-        .map_err(|_| anyhow::anyhow!("the routes were installed twice"))
-}
+    app::register(routes).build()
+});
 
 impl DomainServer for N8nMcp {
     type Contract = N8nContract;
@@ -123,7 +106,7 @@ impl DomainServer for N8nMcp {
         &SERVER_SETUP
     }
     fn routes() -> &'static Routes<Self> {
-        ROUTES.get_or_init(|| routes_for(None))
+        &ROUTES
     }
 }
 

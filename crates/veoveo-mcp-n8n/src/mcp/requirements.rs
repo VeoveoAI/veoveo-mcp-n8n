@@ -3,8 +3,7 @@ use super::setup::N8nContract;
 use std::sync::LazyLock;
 use veoveo_hub_sdk::{registration::AuthorizationDeclaration, server_contract::McpServerContract};
 pub static AUTHORIZATION: LazyLock<AuthorizationDeclaration> = LazyLock::new(|| {
-    // The declaration is the same whichever app origin the editor's App frames.
-    let declaration = super::routes_for(None).authorization();
+    let declaration = super::ROUTES.authorization();
     declaration
         .check(&crate::server(), &N8nContract::scheme())
         .expect("n8n route authorization");

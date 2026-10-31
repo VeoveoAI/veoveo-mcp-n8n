@@ -4,11 +4,12 @@ use std::sync::OnceLock;
 
 use veoveo_hub_sdk::{
     PublicDeployment,
+    hosting::DomainServer,
     registration::{RegistrationDeclaration, ServerEndpoint, ServerVersion},
     server_contract::McpServerContract,
 };
 
-use super::setup::N8nContract;
+use super::{N8nMcp, setup::N8nContract};
 
 /// The registration the server advertises. Startup sets it from the deployment before
 /// the MCP setup is built; until then Discover advertises no declarations.
@@ -29,7 +30,7 @@ pub fn registration(
         uri_scheme: N8nContract::scheme(),
         version: ServerVersion::new(env!("CARGO_PKG_VERSION"))?,
         endpoint: ServerEndpoint::new(url)?,
-        surfaces: super::routes_for(None).surfaces(),
+        surfaces: N8nMcp::routes().surfaces(),
     })
 }
 

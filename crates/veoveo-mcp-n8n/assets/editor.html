@@ -5,33 +5,42 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>n8n</title>
 <style>
-  html, body { margin: 0; height: 100%; background: #f5f5f5; font: 14px/1.4 system-ui, sans-serif; color: #333; }
-  body.dark { background: #1e1e1e; color: #ddd; }
-  #status { padding: 16px; }
-  #editor { display: none; border: 0; width: 100%; height: 100%; }
-  body.framed #editor { display: block; }
-  body.framed #status { display: none; }
+  :root { color-scheme: light dark; }
+  body { margin: 0; padding: 16px; font: 14px/1.5 system-ui, sans-serif; color: #222; background: transparent; }
+  body.dark { color: #e8e8e8; }
+  h1 { font-size: 16px; margin: 0 0 8px; }
+  p { margin: 0 0 12px; }
+  code { word-break: break-all; }
+  button { font: inherit; padding: 8px 16px; border-radius: 6px; border: 1px solid #ea4b71; background: #ea4b71; color: #fff; cursor: pointer; }
+  button:disabled { opacity: 0.5; cursor: default; }
+  #error { color: #c62828; }
 </style>
 </head>
 <body>
-<div id="status">Opening n8n's editor…</div>
-<iframe id="editor" title="n8n's editor" allow="clipboard-read; clipboard-write; fullscreen"></iframe>
+<h1>n8n's editor</h1>
+<p id="status">Reading the editor's address…</p>
+<p><button id="open" type="button" disabled>Open n8n's editor</button></p>
+<p id="error" hidden></p>
 <script>
 (() => {
   "use strict";
-  // The view of ui://n8n/editor under MCP Apps 2026-01-26: it reads n8n://editor from its
-  // own server through the host and frames the editor URL it names, the server's app
-  // origin, which the App's UI metadata declares as its one frame domain.
+  // The view of ui://n8n/editor under MCP Apps 2026-01-26: a self-contained launcher. It
+  // reads n8n://editor from its own server through the host, shows the editor's URL and,
+  // when the person asks, opens the server's app origin top-level with ui/open-link. It
+  // frames nothing: this view runs in a frame sandboxed allow-scripts alone, which a
+  // nested frame would inherit, so the editor would hold no session of its own there.
   const APPS_PROTOCOL = "2026-01-26";
   const APP_INFO = { name: "n8n editor", version: "1" };
   const REQUEST_TIMEOUT_MS = 30000;
   const pending = new Map();
   let nextId = 1;
   let tornDown = false;
+  let editorUrl = null;
 
+  const $ = (id) => document.getElementById(id);
   const post = (message) => window.parent.postMessage(message, "*");
   const notify = (method, params) => { if (!tornDown) post({ jsonrpc: "2.0", method, params }); };
-  const status = (text) => { document.getElementById("status").textContent = text; };
+  const showError = (text) => { $("error").textContent = text; $("error").hidden = false; };
 
   function request(method, params) {
     const id = nextId++;
@@ -44,6 +53,10 @@
 
   function applyHostContext(context) {
     document.body.classList.toggle("dark", !!context && context.theme === "dark");
+  }
+
+  function reportSize() {
+    notify("ui/notifications/size-changed", { height: document.documentElement.scrollHeight });
   }
 
   window.addEventListener("message", (event) => {
@@ -68,38 +81,54 @@
     else call.resolve(message.result);
   });
 
+  async function openEditor() {
+    if (!editorUrl) return;
+    $("error").hidden = true;
+    try {
+      // A person's click: the host may open the origin in a new tab.
+      const result = await request("ui/open-link", { url: editorUrl });
+      if (result && result.isError) showError("The host did not open the editor.");
+    } catch (error) {
+      showError(`The host did not open the editor: ${error.message}`);
+    }
+    reportSize();
+  }
+
   async function start() {
+    $("open").addEventListener("click", openEditor);
     let initialized;
     try {
       initialized = await request("ui/initialize", {
         protocolVersion: APPS_PROTOCOL,
         appInfo: APP_INFO,
-        appCapabilities: { availableDisplayModes: ["fullscreen"] },
+        appCapabilities: { availableDisplayModes: ["inline", "fullscreen"] },
       });
     } catch (error) {
-      status(`The editor could not connect to its host: ${error.message}`);
+      $("status").textContent = "";
+      showError(`The editor could not connect to its host: ${error.message}`);
       return;
     }
     applyHostContext(initialized && initialized.hostContext);
     notify("ui/notifications/initialized", {});
-    request("ui/request-display-mode", { mode: "fullscreen" }).catch(() => {});
-    let editor;
     try {
       const read = await request("resources/read", { uri: "n8n://editor" });
-      editor = JSON.parse(read.contents[0].text);
+      const editor = JSON.parse(read.contents[0].text);
+      const url = new URL(editor.editorUrl);
+      if (url.protocol !== "https:") throw new Error("the editor's address is not an HTTPS origin");
+      editorUrl = url.origin + "/";
     } catch (error) {
-      status(`The editor's address could not be read: ${error.message}`);
+      $("status").textContent = "";
+      showError(`The editor's address could not be read: ${error.message}`);
+      reportSize();
       return;
     }
-    const url = new URL(editor.editorUrl);
-    if (url.protocol !== "https:" && url.hostname !== "localhost") {
-      status("The editor's address is not an HTTPS origin.");
-      return;
-    }
-    const frame = document.getElementById("editor");
-    frame.src = url.href;
-    document.body.classList.add("framed");
-    notify("ui/notifications/size-changed", { height: window.innerHeight });
+    $("status").innerHTML = "";
+    $("status").append("The editor opens on its own origin, ");
+    const code = document.createElement("code");
+    code.textContent = editorUrl;
+    $("status").append(code, ", and acts in n8n as its owner.");
+    $("open").disabled = false;
+    reportSize();
   }
 
   start();

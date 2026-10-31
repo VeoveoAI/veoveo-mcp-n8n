@@ -399,7 +399,7 @@ async fn n8n_runs_on_the_servers_login_and_applies_workflows_by_file_name() {
 
         // The editor on the app origin acts as n8n's owner: the person's request reaches
         // n8n with the owner's session, which the server signed in for, and the answer
-        // sets no cookie and refuses no frame.
+        // sets no cookie and keeps n8n's frame refusal.
         let app_host = "n8n.apps.veoveo.test";
         let session = Arc::new(EditorSession::new(
             N8nClient::new(N8nSettings::base_url()).unwrap(),
@@ -462,7 +462,7 @@ async fn n8n_runs_on_the_servers_login_and_applies_workflows_by_file_name() {
         assert_eq!(me["data"]["email"], veoveo_mcp_n8n::n8n::OWNER_EMAIL, "{me}");
         let page = editor_router.clone().oneshot(on_app("/")).await.unwrap();
         assert_eq!(page.status(), StatusCode::OK);
-        assert!(page.headers().get("x-frame-options").is_none());
+        assert_eq!(page.headers()["x-frame-options"], "SAMEORIGIN");
         let html = axum::body::to_bytes(page.into_body(), 8 << 20).await.unwrap();
         assert!(String::from_utf8_lossy(&html).contains("<html"), "the editor page is not HTML");
         drop(editor_hub);

@@ -54,6 +54,7 @@ pub async fn run() -> Result<()> {
     mcp::REGISTRATION
         .set(declaration.clone())
         .map_err(|_| anyhow::anyhow!("the registration was declared twice"))?;
+    mcp::force_setup();
     if args.describe_registration {
         let metadata = registration::prepare(&args, declaration)?;
         serde_json::to_writer_pretty(std::io::stdout().lock(), &metadata)?;
@@ -119,8 +120,6 @@ async fn serve(
     let app_origin = registration
         .app_origin()
         .context("the Hub named no app origin for n8n's editor")?;
-    mcp::install_routes(app_origin)?;
-    mcp::force_setup();
     let store = PlatformStore::connect(
         StoreConfig::builder(grant.url.as_str(), grant.password.clone())
             .username(grant.username.as_str())

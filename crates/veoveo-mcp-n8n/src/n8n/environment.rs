@@ -146,6 +146,9 @@ impl N8nSettings {
     pub fn environment(&self, secrets: &N8nSecrets) -> Vec<(&'static str, String)> {
         let database = &self.database;
         let mut environment = vec![
+            // n8n runs as in production wherever it runs: without NODE_ENV it takes itself
+            // for a development build and drops its own security headers.
+            ("NODE_ENV", "production".to_owned()),
             ("N8N_LISTEN_ADDRESS", LISTEN_ADDRESS.to_owned()),
             ("N8N_PORT", PORT.to_string()),
             ("N8N_USER_FOLDER", self.user_folder.display().to_string()),
@@ -293,6 +296,7 @@ mod tests {
         .unwrap();
         let environment = environment(&settings);
         for (name, value) in [
+            ("NODE_ENV", "production"),
             ("N8N_LISTEN_ADDRESS", "127.0.0.1"),
             ("N8N_PORT", "5678"),
             ("N8N_PUSH_BACKEND", "sse"),

@@ -184,10 +184,27 @@ async fn workflows_executions_and_the_editor_are_read_with_their_permissions_for
         names.sort_unstable();
         assert_eq!(names, ["editor_changes", "retry_execution", "run", "stop_execution"]);
 
-        // The editor's App is the view that frames the app origin.
-        let app = full.rpc("resources/read", json!({"uri": "ui://n8n/editor"})).await;
-        let html = app["result"]["contents"][0]["text"].as_str().unwrap_or_default();
+        // The editor's App is a launcher: it reads the editor's address and opens the
+        // app origin with ui/open-link; it frames nothing and declares no frame domain.
+        let app = full
+            .rpc("resources/read", json!({"uri": "ui://n8n/editor"}))
+            .await;
+        let html = app["result"]["contents"][0]["text"]
+            .as_str()
+            .unwrap_or_default();
         assert!(html.contains("n8n://editor"), "{app}");
+        assert!(html.contains("ui/open-link"), "{app}");
+        assert!(!html.contains("<iframe"), "{app}");
+        let descriptor = listed["result"]["resources"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|resource| resource["uri"] == "ui://n8n/editor")
+            .unwrap();
+        assert!(
+            !descriptor.to_string().contains("frameDomains"),
+            "{descriptor}"
+        );
 
         // An empty branch lists no workflow.
         let listing = read_json(&read(&full, "n8n://workflows").await);
@@ -409,7 +426,7 @@ async fn the_hooks_reach_n8n_s_webhooks_and_the_editor_acts_as_n8n_s_owner() {
 
     // The editor: the Hub's token and n8n.editor admit a person, whose request reaches n8n
     // with the owner's session in place of any the browser sent and without the Hub's
-    // token; the answer carries neither n8n's cookie nor its frame refusal.
+    // token; the answer carries no n8n cookie and keeps n8n's frame refusal.
     let response = send(on_app_origin("/", "GET", None, None)).await;
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     let response = send(on_app_origin(
@@ -429,7 +446,7 @@ async fn the_hooks_reach_n8n_s_webhooks_and_the_editor_acts_as_n8n_s_owner() {
     .await;
     assert_eq!(response.status(), StatusCode::OK);
     assert!(response.headers().get("set-cookie").is_none());
-    assert!(response.headers().get("x-frame-options").is_none());
+    assert_eq!(response.headers()["x-frame-options"], "SAMEORIGIN");
     let body = axum::body::to_bytes(response.into_body(), 1 << 20)
         .await
         .unwrap();
