@@ -1,9 +1,12 @@
 //! The server's own tables in the `n8n` schema: what it applied from the branch's
-//! `workflows/` for its tenant, and the runs it dispatched. Each statement is a `.sql`
-//! file under `workflows/` or `runs/`, run through sqlx's checked `query_file*!` macros. n8n's own `n8n_*` tables share the
+//! `workflows/` for its tenant, the runs it dispatched and n8n's encryption key. Each
+//! statement is a `.sql` file under `workflows/`, `runs/` or `instance/`, run through
+//! sqlx's checked `query_file*!` macros. n8n's own `n8n_*` tables share the
 //! schema; no statement here names them.
+mod instance;
 mod runs;
 
+pub use instance::{InstanceKeyError, InstanceKeyStore, KeyOrigin};
 pub use runs::{Run, RunStore};
 
 use crate::{

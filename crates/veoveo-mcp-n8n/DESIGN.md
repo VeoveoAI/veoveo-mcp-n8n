@@ -138,18 +138,42 @@ The server reads `n8n/instance.toml` and `workflows/` and refuses a malformed on
 it contacts anything. It builds its registration declaration and registers with the Hub,
 which issues its database login, its public base and its app origin; a registration
 without either fails the start. It applies its
-migrations, then starts n8n as its child process with the
-[configuration](#n8n-configuration) below. n8n creates its owner from the environment.
-On first start the server generates the owner's password, keeps it under
-`/sandbox/state/n8n` and passes n8n only its bcrypt hash. Once n8n answers
+migrations, reads n8n's encryption key from its own table, as [the key](#the-key)
+describes, then starts n8n as its child process with the
+[configuration](#n8n-configuration) below. n8n creates its owner from the environment:
+the server generates a new password for the owner at every start and passes n8n only its
+bcrypt hash, which n8n applies to the owner it keeps. Once n8n answers
 `/healthz/readiness`, which follows its migrations, the server checks the API key it
-kept beside the password against `/api/v1`. When n8n refuses it, on first start or when
-the branch's data environment holds an n8n other than the one the sandbox's disk knew, the
-server logs in as the owner at `/rest/login`, mints a new key at `/rest/api-keys` with the
-scopes it uses and keeps it. It imports the instance's credentials with
+kept under `/sandbox/state/n8n` against `/api/v1`. When the disk keeps none, on first
+start or in a new sandbox, or n8n refuses it, as when the branch's data environment holds
+an n8n other than the one the sandbox's disk knew, the server logs in as the owner at
+`/rest/login`, revokes the keys under its label that n8n still holds, since n8n lets an
+owner hold one key per label, mints a new key at `/rest/api-keys` with the scopes it
+uses and keeps it. It imports the instance's credentials with
 `n8n import:credentials`, applies the branch's workflows through `/api/v1` and serves;
 `/readyz` answers only from then on. Beside MCP it runs the Task worker of `run` and the
 loopback listener of the Veoveo nodes.
+
+### The Key
+
+n8n's data, its tables in schema `n8n`, lives in the branch's data environment and
+outlives the sandbox: a push that changes `openshell/image/`, `openshell/policy.yaml` or
+`openshell/providers.yaml`, or a changed factory base, gives the branch a new sandbox
+with an empty disk over the same data. n8n's encryption key therefore lives with that
+data, in the server's table `n8n.instance_key`, created once and read at every start.
+When the table holds no key and the disk holds one, the one an earlier version of the
+server kept there or the one n8n wrote into its own settings file, which n8n requires to
+match the key it starts with, the server adopts it into the table; when neither holds one, it generates one, but only while
+n8n's tables do not exist yet. With n8n's tables and no key, the start fails and says
+that n8n's data cannot be read without its key, rather than let n8n fail on its own data.
+Every credential n8n holds is a provider's placeholder, so the key protects no real
+secret: it only lets n8n read its own data again. The key's row also names the n8n
+instance: a new row, with n8n's data started again over a reset schema, is a new
+instance, whose execution numbers start again at 1.
+
+What a new sandbox loses is only what the server makes again: the owner's password, new
+at every start, the API key, minted again, and n8n's user folder, which holds nothing n8n
+cannot rebuild.
 
 If n8n exits, the server exits, and OpenShell restarts the workload; the server never
 restarts n8n itself. SIGTERM stops claiming runs, lets running dispatches settle for up
@@ -165,11 +189,11 @@ template.
 | `N8N_USER_FOLDER`, `N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS` | `/sandbox/state/n8n/home`, `true` | n8n's own settings file and folders live on the sandbox's persistent disk, readable by its user alone |
 | `N8N_EDITOR_BASE_URL`, `N8N_WEBHOOK_URL` | The registration's `veoveo_app_origin` with the root path, and `{veoveo_public_base}/hooks/` | n8n builds, shows and registers URLs on the Hub's routes; a production webhook is `{N8N_WEBHOOK_URL}webhook/{path}`. n8n 2.46 deprecates `WEBHOOK_URL` for `N8N_WEBHOOK_URL`, which sets the base of test and production webhooks alike |
 | `N8N_PUSH_BACKEND` | `sse` | The Hub forwards no WebSocket upgrade on an app origin, so the editor's push channel is server-sent events; n8n then turns off its collaboration features |
-| `N8N_INSTANCE_OWNER_MANAGED_BY_ENV`, `N8N_INSTANCE_OWNER_EMAIL`, `N8N_INSTANCE_OWNER_PASSWORD_HASH` | `true`, the server's owner address, the bcrypt hash of the generated password | n8n's owner exists from the first start, with no setup step |
+| `N8N_INSTANCE_OWNER_MANAGED_BY_ENV`, `N8N_INSTANCE_OWNER_EMAIL`, `N8N_INSTANCE_OWNER_PASSWORD_HASH` | `true`, the server's owner address, the bcrypt hash of the password the server generates at every start, which n8n applies to its owner | n8n's owner exists from the first start, with no setup step |
 | `DB_TYPE`, `DB_POSTGRESDB_*`, `DB_TABLE_PREFIX` | `postgresdb`, the registration's login and schema `n8n`, `n8n_` | n8n's state lives in the installation's PostgreSQL, in the branch's data environment |
 | `PGOPTIONS` | `-c role=server_n8n` | Every n8n connection takes the server's group role, so n8n's tables belong to it, as core's database design requires of a server's objects. The fork checks for the schema before `CREATE SCHEMA`, so the login needs no CREATE privilege on the database |
 | `DB_POSTGRESDB_SSL_ENABLED`, `DB_POSTGRESDB_SSL_CA_FILE`, `DB_POSTGRESDB_SSL_REJECT_UNAUTHORIZED` | `true`, the bundle OpenShell names in `SSL_CERT_FILE`, `true` | n8n verifies PostgreSQL against the platform roots; n8n reads `DB_POSTGRESDB_SSL_CA` from the file its `_FILE` form names. Node reads only `NODE_EXTRA_CA_CERTS`, which OpenShell sets to the sandbox's interception CA alone. The grant's URL has `sslmode=verify-full`; on a test cluster it has `sslmode=disable` and n8n connects without TLS. Any other mode fails the start |
-| `N8N_ENCRYPTION_KEY` | Generated on first start, kept under `/sandbox/state/n8n` | n8n encrypts its credentials, which hold only placeholders |
+| `N8N_ENCRYPTION_KEY` | The key in `n8n.instance_key`, beside n8n's data, as [the key](#the-key) describes | n8n encrypts its credentials, which hold only placeholders, so the key protects no real secret |
 | `N8N_BLOCK_ENV_ACCESS_IN_NODE`, `N8N_BLOCK_FILE_ACCESS_TO_N8N_FILES`, `N8N_RESTRICT_FILE_ACCESS_TO` | `true`, `true`, `/sandbox/n8n-files` | Workflows read no environment and no file outside one folder |
 | `NODES_INCLUDE`, `NODES_EXCLUDE` | The node types `n8n/instance.toml` admits, and n8n's command, SSH, Git, local-file and MCP nodes | n8n loads only the admitted node types, and never the excluded ones, which an instance cannot admit. No node runs commands, reaches past the policy's rules or speaks MCP |
 | `N8N_CUSTOM_EXTENSIONS` | The checkout's `nodes/n8n-nodes-veoveo` | The Veoveo nodes, which `NODES_INCLUDE` always admits |
@@ -271,12 +295,15 @@ token, then calls the workflow's Veoveo Trigger on loopback, n8n's production we
 forward, and a body naming the operation ID, the run token, the operation's callback URL,
 the bridge's URL and the input. The trigger answers at once with n8n's execution ID, as
 n8n's `onReceived` response mode lets a webhook answer with `$execution.id`, and the
-dispatch records it as the operation's job. The Task then parks.
+dispatch records the operation's job as `{instance}:{execution}`, the n8n instance of
+[the key](#the-key) and the execution number, so a new n8n's executions never meet an
+earlier one's runs. The Task then parks.
 
 The Veoveo Result node posts the JSON of the items it receives to the callback URL on the
 server's loopback listener, `/n8n/operations/{operation_id}/{token}`: the operation's
 callback token, which only that execution's data holds, authenticates it, and the server
-stores it as the operation's final event. Every operation is also checked: the first
+stores it as the operation's final event, named by the operation, as each status check's
+observation is, never by the execution number alone. Every operation is also checked: the first
 status check two seconds after the dispatch, each interval 1.2 times the one before, at
 most 60 within the run's deadline of 24 hours, through n8n's public API. A run without a
 callback, such as one dispatched again, completes from the checks.
@@ -401,6 +428,7 @@ its owner. The server relies on them as follows.
 | Table | Key | Retention |
 |---|---|---|
 | `n8n.applied_workflow` | `(tenant, workflow)` | While the workflow's file exists on the branch |
+| `n8n.instance_key` | `(tenant)` | For the life of n8n's data in the schema, which the key decrypts |
 | `n8n.run` | `(tenant, task_id)` | While the run's Task runs; the worker deletes it when the Task ends |
 | `n8n.n8n_*` | n8n's own | n8n's; the server's statements never touch these tables |
 
@@ -446,8 +474,8 @@ a new sandbox.
 |---|---|
 | `src/contract` unit tests | Workflow names, execution IDs and typed addresses |
 | `src/instance`, `src/n8n`, `src/workflows` unit tests | The instance file's admission, n8n's environment, the generated secrets, the credential import document, the workflow write shape and webhook URLs, and each apply decision |
-| `tests/workflows.rs` | Against a real n8n on a migrated database: n8n migrates as the server's login, which may not create in the database, and its tables are prefixed and belong to the group role; the key is minted and kept, a credential imported; applying `workflows/` creates and publishes, keeps, updates, replaces an editor's version and archives by file name, records digests and versions, and the example's production webhook answers; a restart reuses the key; the branch's workflows apply with the Veoveo nodes, `hello-run` runs as a Task to its Veoveo Result's output, and the editor serves n8n's pages and owner session through the proxy |
-| `tests/runs.rs` | Through the SDK's in-process mesh and a fake n8n: a run completes from its Veoveo Result, fails and is stopped from n8n's execution through the status check, is cancelled by its caller, which stops the execution, and a restarted worker keeps waiting on the recorded execution |
+| `tests/workflows.rs` | Against a real n8n on a migrated database: n8n migrates as the server's login, which may not create in the database, and its tables are prefixed and belong to the group role; the key is minted and kept, a credential imported; applying `workflows/` creates and publishes, keeps, updates, replaces an editor's version and archives by file name, records digests and versions, and the example's production webhook answers; a restart reads n8n's key from the database and reuses the API key; a new sandbox's empty disk starts with the key the database keeps, a new owner password and a newly minted API key; with n8n's data and no key the start is refused, and a key on the disk is adopted; the branch's workflows apply with the Veoveo nodes, `hello-run` runs as a Task to its Veoveo Result's output, and the editor serves n8n's pages and owner session through the proxy |
+| `tests/runs.rs` | Through the SDK's in-process mesh and a fake n8n: a run completes from its Veoveo Result, fails and is stopped from n8n's execution through the status check, is cancelled by its caller, which stops the execution, and a restarted worker keeps waiting on the recorded execution; a run's job names its n8n instance, so a new n8n's execution numbers never meet an earlier one's |
 | `tests/bridge.rs` | Only table tools and only a running run's token, for the run's caller through the mesh's exchange of the run's Task; a caller without the provider's permission gets the Hub's refusal |
 | `tests/containment.rs` | n8n listens on loopback only, reads no environment or outside file, loads no excluded node, and a credential-bound endpoint refuses a value that is not its placeholder |
 | `tests/mcp.rs` | Discovery, permission refusals, the refusal of another tenant, the workflows, executions and editor resources and the editor's App through the SDK's test Hub; the hooks reach only n8n's webhooks without the server's headers, and the editor acts as n8n's owner on the app origin alone and keeps n8n's frame refusal, against a fake n8n; the editor's App opens the origin with `ui/open-link` and frames nothing |

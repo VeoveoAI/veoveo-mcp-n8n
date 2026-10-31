@@ -105,7 +105,9 @@ async fn result(
     let Ok(post) = serde_json::from_slice::<ResultPost>(&body) else {
         return (StatusCode::BAD_REQUEST, "expected {executionId, output}").into_response();
     };
-    let Ok(event_id) = OperationEventId::parse(format!("result-{}", post.execution_id)) else {
+    // The event is the operation's, which no other run shares; n8n's execution number
+    // alone would repeat once n8n's data starts again.
+    let Ok(event_id) = OperationEventId::parse(format!("result-{operation_id}")) else {
         return StatusCode::BAD_REQUEST.into_response();
     };
     let payload = match serde_json::to_value(RunOutcome::Succeeded {

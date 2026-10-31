@@ -1,0 +1,21 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "-- Whether n8n's migrations ran in the server's schema: their table exists. The statement\n-- reads the catalog, which names no tenant and holds one row for the relation at most.\nSELECT pg_catalog.to_regclass('n8n.n8n_migrations') IS NOT NULL AS \"exists!\"\n",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "exists!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "9fc55dc9a3f3449b97a4b1503c76a39d80c3a55d4928b6171bedfd2c6704eac8"
+}

@@ -4,6 +4,7 @@
 //! execution the trigger answers with. The Task then parks. The Veoveo Result node's
 //! callback on the server's loopback listener, or a status check through n8n's public API,
 //! settles the operation, and the Task completes, fails or ends as cancelled.
+mod job;
 mod outcome;
 mod service;
 
@@ -19,8 +20,8 @@ use veoveo_hub_sdk::{
     hosting::ServerCalls,
 };
 use veoveo_task::{
-    CheckSchedule, ExternalJobId, OperationKey, OperationSpec, ProviderName, StepDispatch,
-    Submission, TaskFailure, TaskRuntime, TaskTransition, WaitOutcome,
+    CheckSchedule, OperationKey, OperationSpec, ProviderName, StepDispatch, Submission,
+    TaskFailure, TaskRuntime, TaskTransition, WaitOutcome,
 };
 use veoveo_types::TaskTypeName;
 
@@ -61,6 +62,8 @@ pub struct Runner {
     pub n8n: N8nClient,
     /// The stored identity of the branch's one tenant.
     pub tenant: veoveo_store::TenantId,
+    /// The n8n instance whose data the server keeps the key of, which names each job.
+    pub instance: uuid::Uuid,
     /// The server's loopback listener, where the Veoveo nodes reach the server.
     pub loopback: Url,
 }
@@ -132,13 +135,7 @@ impl Runner {
             .operation(&spec)
             .dispatch(|dispatch| self.dispatch(task_id, &request, &path, dispatch))
             .await?;
-        let execution = operation
-            .external_id
-            .as_ref()
-            .map(|id| ExecutionId::parse(id.as_str()))
-            .transpose()
-            .ok()
-            .flatten();
+        let execution = operation.external_id.as_ref().and_then(job::execution);
         let outcome = ctx
             .wait::<RunOutcome, _>(&spec.key, &N8nOperations::new(self.n8n.clone()))
             .await?;
@@ -209,7 +206,7 @@ impl Runner {
             && let Some(execution) = self.reconcile(task_id, &operation_id).await?
         {
             tracing::info!(%execution, "found the execution an earlier dispatch started");
-            return Ok(Submission::job(ExternalJobId::parse(execution.as_str())?));
+            return Ok(Submission::job(job::job(self.instance, &execution)));
         }
         let token = generate_secret()?;
         self.runs
@@ -237,7 +234,7 @@ impl Runner {
             .record_execution(self.tenant, task_id, &execution)
             .await?;
         tracing::info!(workflow = %request.workflow, %execution, "dispatched the run");
-        Ok(Submission::job(ExternalJobId::parse(execution.as_str())?))
+        Ok(Submission::job(job::job(self.instance, &execution)))
     }
 
     /// The execution an earlier dispatch of `task_id` started: the one it recorded, or

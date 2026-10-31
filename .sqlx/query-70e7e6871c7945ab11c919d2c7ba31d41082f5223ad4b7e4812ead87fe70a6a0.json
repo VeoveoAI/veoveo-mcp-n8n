@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "-- Keep the encryption key of the tenant's n8n with a new instance identity, unless one is\n-- kept already.\nINSERT INTO n8n.instance_key (tenant, instance_id, encryption_key, created_at)\nVALUES ($1, $2, $3, now())\nON CONFLICT (tenant) DO NOTHING\n",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "70e7e6871c7945ab11c919d2c7ba31d41082f5223ad4b7e4812ead87fe70a6a0"
+}

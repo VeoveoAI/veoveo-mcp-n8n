@@ -1,7 +1,8 @@
 //! What the server keeps for n8n on the sandbox's persistent disk, under
-//! `/sandbox/state/n8n`: the owner's generated password, n8n's encryption key, the API key
-//! the server minted, and n8n's own user folder. Each secret is a file of mode 0600 in a
-//! directory of mode 0700.
+//! `/sandbox/state/n8n`: the API key the server minted, and n8n's own user folder. Nothing
+//! here outlives a new sandbox, so nothing here is needed to read n8n's data: n8n's
+//! encryption key lives in the database with that data, and the owner's password is new
+//! at every start. Each secret is a file of mode 0600 in a directory of mode 0700.
 use std::{
     fs,
     io::{self, Write},
@@ -11,7 +12,6 @@ use std::{
 
 use secrecy::{ExposeSecret, SecretString};
 
-const OWNER_PASSWORD: &str = "owner-password";
 const ENCRYPTION_KEY: &str = "encryption-key";
 const API_KEY: &str = "api-key";
 const USER_FOLDER: &str = "home";
@@ -54,14 +54,32 @@ impl StateDirectory {
         self.root.join(CREDENTIALS)
     }
 
-    /// The owner's password, generated on first start.
-    pub fn owner_password(&self) -> io::Result<SecretString> {
-        self.load_or_generate(OWNER_PASSWORD)
+    /// The encryption key this disk holds, which the server adopts when its database holds
+    /// none: the one an earlier version of the server kept here, or the one n8n wrote into
+    /// its own settings file, `.n8n/config` in its user folder, which n8n requires to match
+    /// the key it starts with.
+    pub fn kept_encryption_key(&self) -> io::Result<Option<SecretString>> {
+        if let Some(key) = read_optional(&self.root.join(ENCRYPTION_KEY))? {
+            let key = key.trim();
+            if !key.is_empty() {
+                return Ok(Some(SecretString::from(key.to_owned())));
+            }
+        }
+        let Some(settings) = read_optional(&self.n8n_settings_file())? else {
+            return Ok(None);
+        };
+        let settings: serde_json::Value = serde_json::from_str(&settings)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+        Ok(settings
+            .get("encryptionKey")
+            .and_then(serde_json::Value::as_str)
+            .filter(|key| !key.is_empty())
+            .map(|key| SecretString::from(key.to_owned())))
     }
 
-    /// n8n's encryption key, generated on first start.
-    pub fn encryption_key(&self) -> io::Result<SecretString> {
-        self.load_or_generate(ENCRYPTION_KEY)
+    /// n8n's own settings file in its user folder.
+    pub fn n8n_settings_file(&self) -> PathBuf {
+        self.user_folder().join(".n8n").join("config")
     }
 
     /// The API key the server minted, when it has one.
@@ -98,17 +116,13 @@ impl StateDirectory {
         file.sync_all()?;
         fs::rename(&staged, &target)
     }
+}
 
-    fn load_or_generate(&self, name: &str) -> io::Result<SecretString> {
-        match fs::read_to_string(self.root.join(name)) {
-            Ok(value) if !value.is_empty() => return Ok(SecretString::from(value)),
-            Ok(_) => {}
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-            Err(error) => return Err(error),
-        }
-        let value = generate_secret()?;
-        self.write_private(name, value.expose_secret())?;
-        Ok(value)
+fn read_optional(path: &Path) -> io::Result<Option<String>> {
+    match fs::read_to_string(path) {
+        Ok(text) => Ok(Some(text)),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error),
     }
 }
 
@@ -124,32 +138,45 @@ mod tests {
     use super::*;
 
     #[test]
-    fn secrets_are_generated_once_and_kept_private() {
+    fn the_directory_and_its_secrets_are_private() {
         let directory = tempfile::tempdir().unwrap();
         let state = StateDirectory::prepare(directory.path().join("n8n")).unwrap();
-        let password = state.owner_password().unwrap();
-        let key = state.encryption_key().unwrap();
-        assert_eq!(password.expose_secret().len(), 64);
-        assert_ne!(password.expose_secret(), key.expose_secret());
-        assert_eq!(
-            state.owner_password().unwrap().expose_secret(),
-            password.expose_secret()
-        );
-        let reopened = StateDirectory::prepare(directory.path().join("n8n")).unwrap();
-        assert_eq!(
-            reopened.encryption_key().unwrap().expose_secret(),
-            key.expose_secret()
-        );
-        for name in [OWNER_PASSWORD, ENCRYPTION_KEY] {
-            let mode = fs::metadata(state.root().join(name))
-                .unwrap()
-                .permissions()
-                .mode();
-            assert_eq!(mode & 0o777, 0o600, "{name}");
-        }
+        assert!(state.kept_encryption_key().unwrap().is_none());
+        state.keep_api_key(&SecretString::from("key")).unwrap();
+        let mode = fs::metadata(state.root().join(API_KEY))
+            .unwrap()
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o777, 0o600);
         let mode = fs::metadata(state.root()).unwrap().permissions().mode();
         assert_eq!(mode & 0o777, 0o700);
         assert!(state.user_folder().is_dir());
+        // n8n's settings file holds the key n8n started with, which the server adopts.
+        fs::create_dir_all(state.user_folder().join(".n8n")).unwrap();
+        fs::write(
+            state.n8n_settings_file(),
+            r#"{"encryptionKey":"n8n-settings-key"}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            state
+                .kept_encryption_key()
+                .unwrap()
+                .unwrap()
+                .expose_secret(),
+            "n8n-settings-key"
+        );
+        // A key an earlier version kept on the disk comes first.
+        state.write_private(ENCRYPTION_KEY, "kept-key\n").unwrap();
+        assert_eq!(
+            state
+                .kept_encryption_key()
+                .unwrap()
+                .unwrap()
+                .expose_secret(),
+            "kept-key"
+        );
+        assert_eq!(generate_secret().unwrap().expose_secret().len(), 64);
     }
 
     #[test]

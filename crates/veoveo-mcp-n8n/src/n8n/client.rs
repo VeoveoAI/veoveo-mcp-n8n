@@ -263,6 +263,49 @@ impl N8nClient {
         Ok(SecretString::from(minted.data.raw_api_key))
     }
 
+    /// Revoke every API key the owner holds under the server's label, which n8n lets one
+    /// user hold once: the key of an earlier sandbox's disk, which the server no longer
+    /// knows. Returns how many it revoked.
+    pub async fn revoke_api_keys(&self, session: &OwnerSession) -> Result<usize, N8nError> {
+        let path = format!("rest/api-keys?ownership=mine&take=100&label={API_KEY_LABEL}");
+        let cookie = format!("{SESSION_COOKIE}={}", session.0.expose_secret());
+        let response = self
+            .http
+            .get(self.url(&path))
+            .header(header::COOKIE, &cookie)
+            .send()
+            .await?;
+        let listed: Data<serde_json::Value> =
+            parse(&path, refuse_failure(Method::GET, &path, response).await?).await?;
+        let keys = listed
+            .data
+            .get("items")
+            .cloned()
+            .unwrap_or(listed.data)
+            .as_array()
+            .cloned()
+            .unwrap_or_default();
+        let mut revoked = 0;
+        for key in keys {
+            if key.get("label").and_then(serde_json::Value::as_str) != Some(API_KEY_LABEL) {
+                continue;
+            }
+            let Some(id) = key.get("id").and_then(serde_json::Value::as_str) else {
+                continue;
+            };
+            let delete = format!("rest/api-keys/{id}");
+            let response = self
+                .http
+                .delete(self.url(&delete))
+                .header(header::COOKIE, &cookie)
+                .send()
+                .await?;
+            refuse_failure(Method::DELETE, "rest/api-keys/{id}", response).await?;
+            revoked += 1;
+        }
+        Ok(revoked)
+    }
+
     /// Whether n8n accepts the client's API key: `false` when it answers 401.
     pub async fn accepts_api_key(&self) -> Result<bool, N8nError> {
         let path = "api/v1/workflows?limit=1&excludePinnedData=true";

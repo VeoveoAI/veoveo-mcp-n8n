@@ -45,24 +45,19 @@ pub struct N8n {
 }
 
 impl N8n {
-    /// Start n8n with `settings`, wait until it is ready, take the server's API key and
-    /// import `credentials`, whose secret fields hold the placeholders `placeholder`
-    /// reads: in the server, the values the providers set in its environment.
+    /// Start n8n with `settings`, its `encryption_key` and the owner's `password` for
+    /// this start, wait until it is ready, take the server's API key and import
+    /// `credentials`, whose secret fields hold the placeholders `placeholder` reads: in
+    /// the server, the values the providers set in its environment.
     pub async fn start(
         settings: &N8nSettings,
         state: &StateDirectory,
+        encryption_key: SecretString,
+        password: &SecretString,
         credentials: &[CredentialMapping],
         placeholder: impl Fn(&str) -> Option<String>,
     ) -> Result<Self> {
-        let password = state
-            .owner_password()
-            .context("loading the owner's password")?;
-        let secrets = N8nSecrets::new(
-            state
-                .encryption_key()
-                .context("loading n8n's encryption key")?,
-            &password,
-        )?;
+        let secrets = N8nSecrets::new(encryption_key, password)?;
         std::fs::create_dir_all(&settings.files)
             .with_context(|| format!("creating {}", settings.files.display()))?;
         let mut child = settings
@@ -73,7 +68,7 @@ impl N8n {
         tracing::info!(pid = child.id(), "n8n started");
         let client = N8nClient::new(N8nSettings::base_url())?;
         wait_ready(&mut child, &client).await?;
-        let client = api_client(&client, state, &password).await?;
+        let client = api_client(&client, state, password).await?;
         let mut n8n = Self { child, client };
         if !credentials.is_empty() {
             import_credentials(settings, &secrets, state, credentials, placeholder).await?;
@@ -137,8 +132,10 @@ async fn wait_ready(child: &mut Child, client: &N8nClient) -> Result<()> {
 }
 
 /// The client with the server's API key: the kept one while n8n accepts it, otherwise a
-/// new one, minted as the owner and kept. n8n refuses a kept key on first start and when
-/// the branch's data environment holds a different n8n than the sandbox's disk.
+/// new one, minted as the owner and kept, in place of the keys under the server's label
+/// that n8n still holds. The disk keeps no key on first start nor in a new sandbox, and
+/// n8n refuses a kept key when the branch's data environment holds a different n8n than
+/// the sandbox's disk.
 async fn api_client(
     client: &N8nClient,
     state: &StateDirectory,
@@ -155,6 +152,16 @@ async fn api_client(
         .login(OWNER_EMAIL, password)
         .await
         .context("logging in as n8n's owner")?;
+    let revoked = client
+        .revoke_api_keys(&session)
+        .await
+        .context("revoking the server's earlier API keys")?;
+    if revoked > 0 {
+        tracing::info!(
+            revoked,
+            "revoked the server's API keys an earlier disk kept"
+        );
+    }
     let key = client
         .mint_api_key(&session)
         .await

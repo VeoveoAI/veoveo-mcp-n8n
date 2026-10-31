@@ -29,9 +29,9 @@ use crate::{
     instance::Instance,
     loopback,
     mcp::{self, N8nMcp, Served},
-    n8n::{N8n, N8nClient, N8nDatabase, N8nSettings, STOP_GRACE, StateDirectory},
+    n8n::{N8n, N8nClient, N8nDatabase, N8nSettings, STOP_GRACE, StateDirectory, generate_secret},
     runs::{N8nTasks, Runner},
-    store::{RunStore, WorkflowStore, stored_tenant},
+    store::{InstanceKeyStore, RunStore, WorkflowStore, stored_tenant},
     workflows::{self, WorkflowFile},
 };
 
@@ -166,14 +166,26 @@ async fn serve(
         veoveo_nodes: std::fs::canonicalize(&args.n8n_nodes)
             .with_context(|| format!("finding the Veoveo nodes at {}", args.n8n_nodes.display()))?,
     };
-    let mut n8n = N8n::start(&settings, &state, &instance.credentials, |name| {
-        std::env::var(name).ok()
-    })
+    let tenant = stored_tenant(&instance.tenant)?;
+    // n8n's key lives with n8n's data, which outlives the sandbox's disk; the owner's
+    // password is new at every start, and n8n applies it from the environment.
+    let (key, origin) = InstanceKeyStore::new(store.clone())
+        .encryption_key(tenant, state.kept_encryption_key()?)
+        .await?;
+    tracing::info!(?origin, instance = %key.instance, "n8n's encryption key");
+    let password = generate_secret()?;
+    let mut n8n = N8n::start(
+        &settings,
+        &state,
+        key.encryption_key,
+        &password,
+        &instance.credentials,
+        |name| std::env::var(name).ok(),
+    )
     .await
     .context("starting n8n")?;
     let workflows = WorkflowStore::new(store.clone());
     let runs = RunStore::new(store.clone());
-    let tenant = stored_tenant(&instance.tenant)?;
     let applied = workflows::apply(n8n.client(), &workflows, tenant, files).await;
     let applied = match applied {
         Ok(decisions) => decisions,
@@ -191,6 +203,7 @@ async fn serve(
         runs: runs.clone(),
         n8n: n8n.client().clone(),
         tenant,
+        instance: key.instance,
         loopback: loopback::base(),
     };
     let mut working = tokio::spawn(
@@ -206,7 +219,7 @@ async fn serve(
     ));
     let session = Arc::new(EditorSession::new(
         N8nClient::new(N8nSettings::base_url())?,
-        state.owner_password()?,
+        password,
     ));
 
     let served = Served {

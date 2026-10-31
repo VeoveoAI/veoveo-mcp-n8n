@@ -172,6 +172,8 @@ pub struct Harness {
     pub mesh: RunningMesh,
     pub calls: ServerCalls,
     pub tenant: TenantId,
+    /// The n8n instance the worker names its jobs with.
+    pub instance: uuid::Uuid,
     pub loopback: Url,
     listener_port: u16,
     pub worker: Option<Worker>,
@@ -198,6 +200,10 @@ fn applied() -> AppliedWorkflow {
 
 pub async fn harness(granted: &[&str]) -> Harness {
     let _ = rustls::crypto::ring::default_provider().install_default();
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .with_test_writer()
+        .try_init();
     let db = TestDb::new().await;
     db.migrate_server(&server(), migrator()).await;
     let n8n = FakeN8n::start().await;
@@ -265,6 +271,7 @@ pub async fn harness(granted: &[&str]) -> Harness {
         mesh,
         calls,
         tenant,
+        instance: uuid::Uuid::now_v7(),
         loopback,
         listener_port,
         worker: None,
@@ -289,6 +296,7 @@ impl Harness {
             runs: runs.clone(),
             n8n,
             tenant: self.tenant,
+            instance: self.instance,
             loopback: self.loopback.clone(),
         };
         let stop = CancellationToken::new();
@@ -377,6 +385,29 @@ impl Harness {
         })
         .await
         .expect("the run never dispatched")
+    }
+
+    /// Wait until the run of `task` recorded its job, the n8n instance and execution, and
+    /// return it.
+    pub async fn submitted(&self, task: &str) -> String {
+        let runtime = self.worker.as_ref().unwrap().runtime.clone();
+        let id = veoveo_types::TaskId::parse(task).unwrap();
+        let key = veoveo_task::OperationKey::parse("execution").unwrap();
+        tokio::time::timeout(DEADLINE, async {
+            loop {
+                if let Some(job) = runtime
+                    .operation(id, &key)
+                    .await
+                    .unwrap()
+                    .and_then(|operation| operation.external_id)
+                {
+                    return job.as_str().to_owned();
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .expect("the run never recorded its job")
     }
 
     pub fn dispatch_count(&self) -> usize {

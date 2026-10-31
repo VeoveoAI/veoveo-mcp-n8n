@@ -2,7 +2,9 @@
 //! database and the fake n8n in `support`: a run completes from its Veoveo Result
 //! callback, fails and ends as cancelled from n8n's execution through the status check,
 //! is cancelled by its caller, which stops the execution, and a restarted worker keeps
-//! waiting on the recorded execution instead of dispatching again. n8n's side is the
+//! waiting on the recorded execution instead of dispatching again. A run's job names its
+//! n8n instance, so n8n's execution numbers starting again over a reset schema never meet
+//! an earlier instance's. n8n's side is the
 //! fake's; the real n8n's run is `tests/workflows.rs`. Requires the PostgreSQL 18 server
 //! programs on `PATH`.
 mod support;
@@ -62,6 +64,10 @@ async fn a_run_completes_fails_is_cancelled_and_survives_its_worker() {
             format!("{}n8n/bridge/calls", harness.loopback)
         );
         let execution = harness.execution_of(&dispatch);
+        assert_eq!(
+            harness.submitted(&task).await,
+            format!("{}:{execution}", harness.instance)
+        );
         // A wrong token or operation is not the run's.
         let forged = format!("{}x", callback.trim_end_matches(|c: char| c != '/'));
         assert_eq!(
@@ -100,7 +106,6 @@ async fn a_run_completes_fails_is_cancelled_and_survives_its_worker() {
             result["structuredContent"]["executionUri"],
             format!("n8n://execution/{execution}")
         );
-
         // A failed execution fails the Task, from the status check.
         let task = harness.run(json!({})).await;
         let dispatch = harness.dispatched(2).await;
@@ -154,6 +159,50 @@ async fn a_run_completes_fails_is_cancelled_and_survives_its_worker() {
             "the restarted worker dispatched again: {view}"
         );
         let _ = TRIGGER_WEBHOOK;
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn an_n8n_started_again_over_a_reset_schema_never_meets_an_earlier_instances_runs() {
+    within(async {
+        let mut harness = harness(&["n8n.workflows.run", "n8n.workflows.read"]).await;
+        let task = harness.run(json!({})).await;
+        let dispatch = harness.dispatched(1).await;
+        let first = harness.execution_of(&dispatch);
+        let earlier = harness.instance;
+        assert_eq!(harness.submitted(&task).await, format!("{earlier}:{first}"));
+        let callback = dispatch["callbackUrl"].as_str().unwrap().to_owned();
+        assert_eq!(
+            post_result(&harness, &callback, first, json!([{"n": 1}])).await,
+            204
+        );
+        harness
+            .until(&task, |view| status(view) == "completed")
+            .await;
+
+        // n8n's data starts again: its execution numbers start again at 1, and the
+        // server keeps a new key and instance identity with it, while core's Tasks keep
+        // the earlier runs' operations.
+        harness.n8n.state().executions.clear();
+        harness.worker.take().unwrap().stop().await;
+        harness.instance = uuid::Uuid::now_v7();
+        harness.worker = Some(harness.start_worker(None).await);
+        let task = harness.run(json!({})).await;
+        let dispatch = harness.dispatched(2).await;
+        let again = harness.execution_of(&dispatch);
+        assert_eq!(again, first, "the fake numbered the new execution anew");
+        let job = harness.submitted(&task).await;
+        assert_eq!(job, format!("{}:{again}", harness.instance));
+        assert_ne!(job, format!("{earlier}:{first}"));
+        let callback = dispatch["callbackUrl"].as_str().unwrap().to_owned();
+        assert_eq!(
+            post_result(&harness, &callback, again, json!([{"n": 2}])).await,
+            204
+        );
+        harness
+            .until(&task, |view| status(view) == "completed")
+            .await;
     })
     .await;
 }

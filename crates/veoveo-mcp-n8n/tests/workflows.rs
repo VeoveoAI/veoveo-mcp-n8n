@@ -2,7 +2,8 @@
 //! which has no CREATE privilege on the database, takes its API key, imports a
 //! credential, then applies `workflows/` by file name: creates and publishes, keeps,
 //! updates, replaces an editor's change and archives a removed file; after a restart it
-//! reuses its key, applies the branch's own workflows with the Veoveo nodes, runs
+//! reuses its key; on a new sandbox's empty disk it starts with the key the database keeps,
+//! a new owner password and a newly minted API key; it applies the branch's own workflows with the Veoveo nodes, runs
 //! `hello-run` as an MCP Task through the SDK's in-process mesh, whose Veoveo Result
 //! completes it, and serves n8n's editor as its owner on the app origin. The n8n program
 //! is `VEOVEO_N8N_PROGRAM`, or `n8n` on `PATH`; the test also needs the PostgreSQL 18
@@ -35,10 +36,10 @@ use veoveo_mcp_n8n::{
     loopback,
     mcp::{AUTHORIZATION, N8nMcp, Served},
     migrator,
-    n8n::{N8n, N8nClient, N8nDatabase, N8nSettings, STOP_GRACE, StateDirectory},
+    n8n::{N8n, N8nClient, N8nDatabase, N8nSettings, STOP_GRACE, StateDirectory, generate_secret},
     runs::{N8nTasks, Runner},
     server,
-    store::{RunStore, WorkflowStore, stored_tenant},
+    store::{InstanceKeyStore, KeyOrigin, RunStore, WorkflowStore, stored_tenant},
     workflows::{self, Decision, WorkflowFile},
 };
 use veoveo_store::ServerSchema;
@@ -119,7 +120,7 @@ async fn n8n_runs_on_the_servers_login_and_applies_workflows_by_file_name() {
         .credentials;
         let directory = tempfile::tempdir().unwrap();
         let state = StateDirectory::prepare(directory.path().join("state/n8n")).unwrap();
-        let settings = N8nSettings {
+        let mut settings = N8nSettings {
             program: std::env::var_os("VEOVEO_N8N_PROGRAM")
                 .map_or_else(|| PathBuf::from("n8n"), PathBuf::from),
             user_folder: state.user_folder(),
@@ -145,10 +146,21 @@ async fn n8n_runs_on_the_servers_login_and_applies_workflows_by_file_name() {
                 .unwrap(),
         };
 
+        // n8n's key lives in the database with its data: a new n8n's is generated.
+        let keys = InstanceKeyStore::new(login.clone());
+        let tenant =
+            stored_tenant(&veoveo_types::TenantId::parse("tenant-a").unwrap()).unwrap();
+        let (instance_key, origin) = keys.encryption_key(tenant, None).await.unwrap();
+        assert_eq!(origin, KeyOrigin::Generated);
         let started = tokio::time::Instant::now();
-        let n8n = N8n::start(&settings, &state, &credentials, |variable| {
-            Some(format!("placeholder-for-{variable}"))
-        })
+        let n8n = N8n::start(
+            &settings,
+            &state,
+            instance_key.encryption_key.clone(),
+            &generate_secret().unwrap(),
+            &credentials,
+            |variable| Some(format!("placeholder-for-{variable}")),
+        )
         .await
         .unwrap();
         println!("n8n ready, keyed and credentialed in {:?}", started.elapsed());
@@ -170,7 +182,7 @@ async fn n8n_runs_on_the_servers_login_and_applies_workflows_by_file_name() {
         .fetch_all(db.a.pool())
         .await
         .unwrap();
-        let own = BTreeSet::from(["_sqlx_migrations", "applied_workflow", "run"]);
+        let own = BTreeSet::from(["_sqlx_migrations", "applied_workflow", "instance_key", "run"]);
         let n8n_tables: Vec<_> = tables
             .iter()
             .filter(|(table, _)| !own.contains(table.as_str()))
@@ -199,8 +211,6 @@ async fn n8n_runs_on_the_servers_login_and_applies_workflows_by_file_name() {
         assert!(!state.credentials_file().exists());
 
         let store = WorkflowStore::new(login.clone());
-        let tenant =
-            stored_tenant(&veoveo_types::TenantId::parse("tenant-a").unwrap()).unwrap();
         let client = n8n.client().clone();
 
         // The branch's file is created and published, and its webhook runs.
@@ -255,8 +265,22 @@ async fn n8n_runs_on_the_servers_login_and_applies_workflows_by_file_name() {
         assert!(applied.is_empty());
         n8n.stop(STOP_GRACE).await;
 
-        // A restart reuses the kept key and keeps what the branch's file already applied.
-        let restarted = N8n::start(&settings, &state, &[], |_| None).await.unwrap();
+        // A restart reads n8n's key from the database, gives the owner a new password,
+        // which n8n applies, reuses the kept API key and keeps what the branch's file
+        // already applied.
+        let (kept, origin) = keys.encryption_key(tenant, None).await.unwrap();
+        assert_eq!(origin, KeyOrigin::Kept);
+        assert_eq!(kept.instance, instance_key.instance);
+        let restarted = N8n::start(
+            &settings,
+            &state,
+            kept.encryption_key,
+            &generate_secret().unwrap(),
+            &[],
+            |_| None,
+        )
+        .await
+        .unwrap();
         assert_eq!(
             state.api_key().unwrap().unwrap().expose_secret(),
             key.expose_secret()
@@ -266,6 +290,29 @@ async fn n8n_runs_on_the_servers_login_and_applies_workflows_by_file_name() {
             .await
             .unwrap();
         assert_eq!(decided(&applied), ["create"]);
+        let applied = workflows::apply(&client, &store, tenant, std::slice::from_ref(&first))
+            .await
+            .unwrap();
+        assert_eq!(decided(&applied), ["keep"]);
+        assert_eq!(call_hello().await["greeting"], "Hello from Veoveo");
+        restarted.stop(STOP_GRACE).await;
+
+        // A new sandbox: its disk is empty while n8n's data lives on in the database. n8n
+        // starts with the key the database keeps, the owner signs in with a new password,
+        // and the server mints a new API key.
+        std::fs::remove_dir_all(state.root()).unwrap();
+        let state = StateDirectory::prepare(directory.path().join("new-sandbox/state/n8n")).unwrap();
+        settings.user_folder = state.user_folder();
+        assert!(state.api_key().unwrap().is_none());
+        let (kept, origin) = keys.encryption_key(tenant, state.kept_encryption_key().unwrap()).await.unwrap();
+        assert_eq!(origin, KeyOrigin::Kept);
+        let password = generate_secret().unwrap();
+        let fresh = N8n::start(&settings, &state, kept.encryption_key, &password, &[], |_| None)
+            .await
+            .unwrap();
+        let minted = state.api_key().unwrap().expect("a key minted on the new disk");
+        assert_ne!(minted.expose_secret(), key.expose_secret());
+        let client = fresh.client().clone();
         let applied = workflows::apply(&client, &store, tenant, std::slice::from_ref(&first))
             .await
             .unwrap();
@@ -344,6 +391,7 @@ async fn n8n_runs_on_the_servers_login_and_applies_workflows_by_file_name() {
             runs: runs.clone(),
             n8n: client.clone(),
             tenant,
+            instance: instance_key.instance,
             loopback: loopback_base,
         };
         let working = tokio::spawn(runner.work(Some(calls.clone()), stop.clone()));
@@ -403,7 +451,7 @@ async fn n8n_runs_on_the_servers_login_and_applies_workflows_by_file_name() {
         let app_host = "n8n.apps.veoveo.test";
         let session = Arc::new(EditorSession::new(
             N8nClient::new(N8nSettings::base_url()).unwrap(),
-            state.owner_password().unwrap(),
+            password.clone(),
         ));
         let editor_hub = testing::TestHub::new(
             testing::for_domain::<N8nMcp>()
@@ -440,7 +488,7 @@ async fn n8n_runs_on_the_servers_login_and_applies_workflows_by_file_name() {
                 N8nSettings::base_url(),
                 Arc::new(EditorSession::new(
                     N8nClient::new(N8nSettings::base_url()).unwrap(),
-                    state.owner_password().unwrap(),
+                    password.clone(),
                 )),
                 Some(app_host.to_owned()),
             ))
@@ -466,8 +514,28 @@ async fn n8n_runs_on_the_servers_login_and_applies_workflows_by_file_name() {
         let html = axum::body::to_bytes(page.into_body(), 8 << 20).await.unwrap();
         assert!(String::from_utf8_lossy(&html).contains("<html"), "the editor page is not HTML");
         drop(editor_hub);
+        fresh.stop(STOP_GRACE).await;
 
-        restarted.stop(STOP_GRACE).await;
+        // Without its key n8n's data cannot be read: with neither the database nor the
+        // disk holding one, the start refuses to make a new one. A key the disk holds is
+        // adopted.
+        sqlx::query("DELETE FROM n8n.instance_key WHERE tenant = $1")
+            .bind(tenant)
+            .execute(login.pool())
+            .await
+            .unwrap();
+        let lost = keys.encryption_key(tenant, None).await.err().expect("a lost key");
+        assert!(lost.to_string().contains("cannot be read without its encryption key"), "{lost}");
+        // The key n8n wrote into its settings file on this disk is the one adopted.
+        let on_disk = state.kept_encryption_key().unwrap();
+        assert!(on_disk.is_some(), "n8n wrote no settings file");
+        let (adopted, origin) = keys.encryption_key(tenant, on_disk).await.unwrap();
+        assert_eq!(origin, KeyOrigin::Adopted);
+        assert_eq!(
+            adopted.encryption_key.expose_secret(),
+            instance_key.encryption_key.expose_secret()
+        );
+        assert_ne!(adopted.instance, instance_key.instance, "an adopted key names a new instance");
     })
     .await
     .expect("the n8n test exceeded 600 seconds");

@@ -55,7 +55,9 @@ impl RunOutcome {
     }
 }
 
-/// The status check and cancellation of a run's operation, through n8n's public API.
+/// The status check and cancellation of a run's operation, through n8n's public API. An
+/// observation's event is named by the operation, which no other run shares, never by
+/// n8n's execution number alone, which n8n's data started again reuses.
 pub struct N8nOperations {
     n8n: N8nClient,
 }
@@ -67,11 +69,11 @@ impl N8nOperations {
 }
 
 fn execution_of(operation: &Operation) -> Result<ExecutionId, anyhow::Error> {
-    let id = operation
+    operation
         .external_id
         .as_ref()
-        .ok_or_else(|| anyhow::anyhow!("the run's operation recorded no execution"))?;
-    Ok(ExecutionId::parse(id.as_str())?)
+        .and_then(super::job::execution)
+        .ok_or_else(|| anyhow::anyhow!("the run's operation recorded no execution"))
 }
 
 impl OperationCalls for N8nOperations {
@@ -87,7 +89,8 @@ impl OperationCalls for N8nOperations {
             };
             return Ok(CheckObservation {
                 event_id: Some(OperationEventId::parse(format!(
-                    "check-missing-{execution}"
+                    "check-missing-{}",
+                    operation.operation_id
                 ))?),
                 payload: serde_json::to_value(outcome)?,
                 is_final: true,
@@ -96,8 +99,8 @@ impl OperationCalls for N8nOperations {
         Ok(match RunOutcome::of(&found) {
             Some(outcome) => CheckObservation {
                 event_id: Some(OperationEventId::parse(format!(
-                    "check-{}-{execution}",
-                    found.status
+                    "check-{}-{}",
+                    found.status, operation.operation_id
                 ))?),
                 payload: serde_json::to_value(outcome)?,
                 is_final: true,
