@@ -97,7 +97,8 @@ from `N8N_CUSTOM_EXTENSIONS` under the package `CUSTOM`. The Veoveo Result and V
 Tool are `CUSTOM.veoveoResult` and `CUSTOM.veoveoTool`. The Veoveo Trigger's `Input
 Schema` parameter, a JSON Schema object, describes the run's input for the overview's
 run form; n8n does not check it. `n8n.workflows.run` declares the risk `sensitive`: a
-workflow acts on outside services with the installation's credentials.
+run acts on outside services with its team's credentials, the providers its team's
+repository requests and the installation grants it.
 
 One n8n instance is one trust domain: any workflow in it can read what n8n stores for
 every other. Each team therefore has an n8n of its own, its runner's, over a database

@@ -25,7 +25,8 @@ pub enum N8nPermission {
     /// Read the team's workflows, their executions and the server's documents.
     #[vocabulary(rename = "n8n.workflows.read")]
     WorkflowsRead,
-    /// Run a workflow: it acts on outside services with the installation's credentials.
+    /// Run a workflow: it acts on outside services with its team's credentials, which the
+    /// team's providers supply to its runner.
     #[vocabulary(rename = "n8n.workflows.run")]
     WorkflowsRun,
     /// Retry or stop an execution.
