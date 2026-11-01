@@ -1,6 +1,7 @@
 # syntax=docker/dockerfile:1.27@sha256:4edf897a3ffa55b89f906fc8cc78afdb3f1834cc9c7083565e611a8a7d5fe99e
 # Stages: dev is the development environment, check is the single gate, build compiles the
-# release binary, and runtime is the deployable image.
+# release binary, computer is what a person's Computer adds for n8n, and runtime is the
+# deployable image.
 
 ARG COMPONENT=veoveo-mcp-n8n
 # n8n from the VeoveoAI fork, commit 9ebc1efe (n8n 2.46.0 and the schema check before
@@ -100,6 +101,25 @@ RUN --mount=type=cache,id=veoveo-mcp-n8n-cargo-registry,target=/usr/local/cargo/
     --mount=type=cache,id=veoveo-mcp-n8n-target,target=/home/sandbox/src/target,uid=1000,sharing=locked \
     cargo build --locked --release --bin "${COMPONENT}" \
     && cp "target/release/${COMPONENT}" "/home/sandbox/${COMPONENT}"
+
+FROM source AS computer-build
+# target/ is a cache mount, so the binary leaves it in the same step.
+RUN --mount=type=cache,id=veoveo-mcp-n8n-cargo-registry,target=/usr/local/cargo/registry,uid=1000,sharing=locked \
+    --mount=type=cache,id=veoveo-mcp-n8n-cargo-git,target=/usr/local/cargo/git,uid=1000,sharing=locked \
+    --mount=type=cache,id=veoveo-mcp-n8n-target,target=/home/sandbox/src/target,uid=1000,sharing=locked \
+    cargo build --locked --release --bin veoveo-n8n-computer \
+    && cp target/release/veoveo-n8n-computer /home/sandbox/veoveo-n8n-computer
+
+# What a person's Computer adds for n8n: Node.js and n8n as the fork's image lays them out,
+# the Veoveo nodes and veoveo-n8n-computer. An installation copies these paths into its
+# Computer image, a Debian trixie image as the fork's and the build's are, so node, n8n's
+# native modules and the binary find the same C library and libstdc++ there; n8n's
+# native modules also need librdkafka1, which the Computer image installs.
+FROM scratch AS computer
+COPY --from=n8n /usr/local/bin/node /usr/local/bin/node
+COPY --from=n8n /usr/local/lib/node_modules/n8n /usr/local/lib/node_modules/n8n
+COPY --chmod=0755 --from=computer-build /home/sandbox/veoveo-n8n-computer /usr/local/bin/veoveo-n8n-computer
+COPY nodes /opt/veoveo/n8n/nodes
 
 # The runtime is the fork's n8n image with the server beside it: the server starts n8n as
 # its child. Both are Debian trixie builds, so the binary's glibc is the image's.

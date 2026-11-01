@@ -512,6 +512,18 @@ names it.
   the public API is the choice: n8n's external hooks run code inside n8n, which the
   program keeps out of n8n's process. Nothing is committed or pushed: the person, or
   their agent, commits and pushes with Lore, and the team's runner applies the push.
+- **The Computer image.** The root `Dockerfile`'s `computer` target holds what a
+  Computer adds for n8n: Node.js and n8n from the fork's image at `/usr/local/bin/node`
+  and `/usr/local/lib/node_modules/n8n`, `veoveo-n8n-computer` at `/usr/local/bin`, built
+  as the server is, and the Veoveo nodes at `/opt/veoveo/n8n/nodes`. The installation
+  copies them into its Computer image, which starts from its factory image, a Debian
+  trixie image as the fork's and the build's are, and adds `librdkafka1`, which n8n's
+  native modules load; the factory base has no Node.js of its own. The Computer's start
+  command starts the program in the background, restarting it after a pause whenever it
+  exits, and `exec`s OpenCode in the foreground, so n8n never delays or stops OpenCode
+  and its output, failures included, is the Computer's own. The Computer version names
+  the program `n8n` on its port in `computers.apps`, and its policy's `hub` and `model`
+  rules name `/usr/local/bin/veoveo-n8n-computer`.
 - **The bridge.** The Veoveo Tool node finds the program's loopback bridge,
   `/n8n/bridge/calls`, and a token of this start in n8n's environment when no run names
   them, and posts the runner's request shape. The program admits the token, a tool's
