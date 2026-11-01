@@ -238,8 +238,9 @@ template.
 | `DB_POSTGRESDB_SSL_ENABLED`, `DB_POSTGRESDB_SSL_CA_FILE`, `DB_POSTGRESDB_SSL_REJECT_UNAUTHORIZED` | `true`, the bundle OpenShell names in `SSL_CERT_FILE`, `true` | n8n verifies PostgreSQL against the platform roots; n8n reads `DB_POSTGRESDB_SSL_CA` from the file its `_FILE` form names. Node reads only `NODE_EXTRA_CA_CERTS`, which OpenShell sets to the sandbox's interception CA alone. The grant's URL has `sslmode=verify-full`; on a test cluster it has `sslmode=disable` and n8n connects without TLS. Any other mode fails the start |
 | `N8N_ENCRYPTION_KEY` | The key in `n8n.instance_key`, beside n8n's data, as [the key](#the-key) describes | n8n encrypts its credentials, which hold only placeholders, so the key protects no real secret |
 | `N8N_BLOCK_ENV_ACCESS_IN_NODE`, `N8N_BLOCK_FILE_ACCESS_TO_N8N_FILES`, `N8N_RESTRICT_FILE_ACCESS_TO` | `true`, `true`, `/sandbox/n8n-files` | Workflows read no environment and no file outside one folder |
-| `NODES_INCLUDE`, `NODES_EXCLUDE` | The node types the runner loads, as [the instance](#the-instance) decides, with the Veoveo nodes; and n8n's command, SSH, Git, local-file and MCP nodes. When the team loads every node type n8n ships, `NODES_INCLUDE` is unset | n8n loads the team's node types and the Veoveo nodes, and never the excluded ones, which neither file can admit. No node runs commands, reaches past the policy's rules or speaks MCP |
+| `NODES_INCLUDE`, `NODES_EXCLUDE` | The node types the runner loads, as [the instance](#the-instance) decides, with the Veoveo nodes; and n8n's command, SSH, Git, local-file and MCP nodes, among them the Microsoft Agent 365 trigger, whose agent calls Microsoft's MCP servers. When the team loads every node type n8n ships, `NODES_INCLUDE` is unset | n8n loads the team's node types and the Veoveo nodes, and never the excluded ones, which neither file can admit. No node n8n ships runs commands, reaches past the policy's rules or speaks MCP. n8n's `mcp-registry` module, which stays on, makes a node type `@n8n/mcp-registry.{server}` on the MCP registry client node for each server of n8n's registry once it has fetched the registry from `api.n8n.io`; it takes that base node from the langchain package directly, and `NODES_EXCLUDE` names no type it makes, so those node types are not excluded |
 | `N8N_CUSTOM_EXTENSIONS` | The checkout's `nodes/n8n-nodes-veoveo` | The Veoveo nodes, which n8n always loads |
+| `VEOVEO_BRIDGE_URL` | The loopback bridge, `http://127.0.0.1:8812/n8n/bridge/calls` | The Veoveo Tool node lists the bridge table's tools for its [tool list](#calls-into-veoveo); each run still names the bridge and its token |
 | `N8N_MCP_MANAGED_BY_ENV`, `N8N_MCP_ACCESS_ENABLED` | `true`, `false` | n8n's own MCP server stays off |
 | `N8N_COMMUNITY_PACKAGES_ENABLED`, `N8N_DIAGNOSTICS_ENABLED`, `N8N_VERSION_NOTIFICATIONS_ENABLED`, `N8N_TEMPLATES_ENABLED` | `false` | n8n installs and fetches nothing on its own |
 
@@ -339,6 +340,14 @@ declared and the caller holds at that moment. A tool outside the table and a tok
 running run are refused with 403; a refusal of the Hub or the provider is the tool's
 error result. An execution that a webhook or n8n's own schedule started belongs to no
 run and calls into no server.
+
+The node's Tool is a list n8n loads from `GET /n8n/bridge/tools` on the bridge that
+`VEOVEO_BRIDGE_URL` names in n8n's environment, with `VEOVEO_BRIDGE_TOKEN` as the bearer
+where it is set: on a runner the bridge table's tools, which the server lists to any
+caller on loopback, and in a person's Computer the tools the Hub lists to the owner. The
+list holds each tool's Hub name, the value the node stores, so a workflow file keeps its
+form; a stored name the list does not hold stays, and a name can be typed in n8n's
+expression mode. A runner serves no editor, so only n8n's own API shows its list there.
 
 ### Models
 
@@ -544,9 +553,12 @@ credential rule names it.
   them, and posts the runner's request shape. The program admits the token, a tool's
   Hub name `{server}__{tool}`, and calls it through the Hub as the owner with the
   Computer's own credential, so the Hub decides each call as it decides the owner's.
+  `GET /n8n/bridge/tools`, with the token as its bearer, lists the tools the Hub lists
+  to the owner, each with its Hub name and description, for the node's
+  [tool list](#calls-into-veoveo).
 - **The Assistant.** n8n's Assistant (Instance AI) is configured from n8n's environment
-  and reaches the model and its sandboxes only through the program, which admits the
-  token of this start on each, as on the bridge:
+  and reaches the model, its sandboxes and the person's tools only through the program,
+  which admits the token of this start on each, as on the bridge:
   - *The model.* `N8N_INSTANCE_AI_MODEL` is `custom/{VEOVEO_N8N_MODEL}` and
     `N8N_INSTANCE_AI_MODEL_URL` is `http://127.0.0.1:{port}/v1/openai`, with the token as
     its key. n8n's `custom/` provider with a URL is its OpenAI-compatible client, which
@@ -580,6 +592,30 @@ credential rule names it.
     execution's events until n8n deletes them, as the client does after the exit. The
     Assistant's workspace setup installs its packages with npm from the registry, through
     the internet rule.
+  - *The person's tools.* `N8N_INSTANCE_AI_MCP_SERVERS` is
+    `veoveo=http://127.0.0.1:{port}/n8n/mcp/{token}`: n8n's form is `name=url` pairs
+    with no headers, so the token is the path's last segment. The program serves
+    `POST /n8n/mcp/{token}` and forwards each request to the Hub's MCP endpoint of the
+    Computers profile, `COMPUTER_HUB_URL`, with `COMPUTER_HUB_REFERENCE` as its bearer,
+    which the `hub` rule's binding replaces with the owner's token: the request's
+    headers but the connection's own, its credentials and its cookies, and its body
+    whole, with its length; the answer streams back without cookies. The Hub answers
+    every request itself, `server/discover` among them, and decides each call as the
+    owner's, as for OpenCode. The fork's MCP client offers MCP 2026-07-28 first and the
+    Hub serves only it, so the Assistant speaks 2026-07-28 to the Hub. A path with
+    another token is refused with 401, and another method with 405. n8n names each tool
+    `veoveo_{server}__{tool}` to its model.
+  - *Permission and confirmation.* n8n's own. A server from `N8N_INSTANCE_AI_MCP_SERVERS`
+    carries no tool permissions of its own, so the Assistant's two MCP permissions
+    apply, which the owner sets in the Assistant's settings: `mcpRead`, by default
+    *always allow*, for a read tool, and `mcpWrite`, by default *require approval*, for
+    every other. A tool is a read tool when its `readOnlyHint` annotation is true; it is
+    a write tool when that hint is false or its `destructiveHint` is true; without
+    either, its name decides: a write word such as `create`, `run` or `send` makes it a
+    write tool, a read word such as `get`, `list` or `search` a read tool, and a name
+    with neither is a write tool. A tool that requires approval stops the Assistant's
+    run until the person approves or denies the call in the chat; a blocked one is not
+    offered to the model. The Hub decides every call that is made.
   - *Search and browser use.* The program turns the Assistant's web search off in n8n's
     settings at each start, as the owner (`PUT /rest/instance-ai/settings` with
     `{"searchDisabled": true}`): a person's own n8n has no search provider, and n8n
@@ -671,11 +707,11 @@ them new sandboxes.
 | `src/contract` unit tests | Workflow names, execution IDs and typed addresses |
 | `src/instance`, `src/n8n`, `src/workflows` unit tests | The instance and admitted files' admission and a team's use of only what is admitted, n8n's environment without an editor, n8n's reported version, the generated secrets, the credential import document, the workflow write shape and webhook URLs, and each apply decision |
 | `src/computer` unit tests | The program's flags, n8n's Assistant environment, sandbox paths and ids, and command output as text across reads |
-| `tests/computer.rs` | `veoveo-n8n-computer` against a fake n8n, a fake Hub MCP endpoint, a fake Lore and a fake model provider: `open` clones a team once at its tracked branch, applies tagged drafts and redirects to the workflow; a saved change and a new tagged workflow are written back in the file form; a team without a tracked branch or a repository no team serves opens nothing; `teams` lists them; the editor reaches n8n without the mount as its owner and sets no cookie; the bridge admits only the Computer's token and calls the Hub with the Computer's credential; the model endpoint admits only that token and streams the provider's answer to a request it sent with the Computer's model placeholder; the sandbox service admits only that token, keeps a sandbox in a directory of the person's home, runs commands there as the test's user with its own `HOME` and without withheld variables, reads one execution once per `exec_id`, resumes after a `seq`, kills a command at its limit or when deleted, keeps file calls in the sandbox and removes its directory; the start's search call reaches n8n as the owner |
+| `tests/computer.rs` | `veoveo-n8n-computer` against a fake n8n, a fake Hub MCP endpoint, a fake Lore and a fake model provider: `open` clones a team once at its tracked branch, applies tagged drafts and redirects to the workflow; a saved change and a new tagged workflow are written back in the file form; a team without a tracked branch or a repository no team serves opens nothing; `teams` lists them; the editor reaches n8n without the mount as its owner and sets no cookie; the bridge admits only the Computer's token and calls the Hub with the Computer's credential, and lists the tools the Hub lists to the owner by their Hub names to that token alone; the Assistant's MCP endpoint admits only the token in its path and serves only POST, and a real MCP client lists and calls the Hub's tools through it, while a raw `server/discover` with its protocol headers and a cookie reaches the Hub with the Computer's credential instead of the client's and without the cookie, and the Hub's answer comes back; the model endpoint admits only that token and streams the provider's answer to a request it sent with the Computer's model placeholder; the sandbox service admits only that token, keeps a sandbox in a directory of the person's home, runs commands there as the test's user with its own `HOME` and without withheld variables, reads one execution once per `exec_id`, resumes after a `seq`, kills a command at its limit or when deleted, keeps file calls in the sandbox and removes its directory; the start's search call reaches n8n as the owner |
 | `tests/team.rs` | The team template and the tests' team read as `n8n/admitted.toml`, which admits all, admits them, and load every node type n8n ships since they name none; the tests' team's credential types are admitted without being named; a team without its optional files uses what the repository admits, and a listed repository's list; under a listed repository, a team node type or credential type not admitted stops the start with a message naming it; the template's rules name n8n's program by its image path |
 | `tests/workflows.rs` | Against a real n8n on a migrated database: n8n migrates as the server's login, which may not create in the database, and its tables are prefixed and belong to the group role; n8n reports its version; the key is minted and kept, a credential imported; applying the template's webhook example creates and publishes, keeps, updates, replaces a version saved in n8n and archives by file name, records digests and versions, and its production webhook answers; a stale key in n8n's settings file over a fresh schema starts n8n with the database's key; a restart reads n8n's key from the database and reuses the API key; a new sandbox's empty disk starts with the key the database keeps, a new owner password and a newly minted API key; n8n's tables with no key refuse the start; the template's and the tests' team's workflows apply with the Veoveo nodes and, the team naming no node types, every node type n8n ships: its HTTP Request calls with the bearer credential the team imports, whose type the repository admits without naming it, and sends its placeholder, and `hello-run` runs as a Task to its Veoveo Result's output, its execution recorded as the Task caller's |
 | `tests/runs.rs` | Through the SDK's in-process mesh and a fake n8n: a run completes from its Veoveo Result, its execution recorded as its Task caller's, fails and is stopped from n8n's execution through the status check, is cancelled by its caller, which stops the execution, and a restarted worker keeps waiting on the recorded execution; a run's job names its n8n instance, so a new n8n's execution numbers never meet an earlier one's |
-| `tests/bridge.rs` | Only table tools and only a running run's token, for the run's caller through the mesh's exchange of the run's Task; a caller without the provider's permission gets the Hub's refusal |
+| `tests/bridge.rs` | The bridge lists its table's tools to any caller on loopback; it calls only table tools and only with a running run's token, for the run's caller through the mesh's exchange of the run's Task; a caller without the provider's permission gets the Hub's refusal |
 | `tests/containment.rs` | n8n listens on loopback only, reads no environment or outside file, loads no excluded node, and a credential-bound endpoint refuses a value that is not its placeholder |
 | `tests/mcp.rs` | Through the SDK's test Hub against a fake n8n: discovery lists the overview App, `run` linked to it for the model and the App and no editor; the host's shared admission resolves the App's `{link}__run` to that link's `run` and nothing else; permission refusals and the refusal of another tenant; the workflows and status resources, with the linked repository, the writer flag and the Computer's edit URL from the forwarded grant; the data rule for a run's caller, a writer and a reader, on reads, stops and retries; the hooks reach only n8n's webhooks without the server's headers, and nothing serves n8n's editor |
 | `tests/database_conformance.rs`, `tests/sql_confinement.rs` | The template's checks over the server's own tables |

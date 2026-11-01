@@ -1,6 +1,6 @@
 //! The server's loopback listener, which only processes in the sandbox reach: the Veoveo
 //! Result node posts a run's output to its operation's callback URL here, and the Veoveo
-//! Tool node calls other servers through the bridge here.
+//! Tool node lists the bridge's tools and calls other servers through the bridge here.
 use std::{net::SocketAddr, sync::Arc};
 
 use axum::{
@@ -8,7 +8,7 @@ use axum::{
     extract::{DefaultBodyLimit, Path, State},
     http::StatusCode,
     response::{IntoResponse, Response},
-    routing::post,
+    routing::{get, post},
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -18,7 +18,7 @@ use veoveo_task::{
 };
 
 use crate::{
-    bridge::{Bridge, BridgeCall, BridgeRefusal},
+    bridge::{Bridge, BridgeCall, BridgeRefusal, BridgeTools},
     contract::ExecutionId,
     runs::RunOutcome,
 };
@@ -45,7 +45,8 @@ struct Loopback {
     bridge: Arc<Bridge>,
 }
 
-/// The loopback routes: `/n8n/operations/{operation_id}/{token}` and `/n8n/bridge/calls`.
+/// The loopback routes: `/n8n/operations/{operation_id}/{token}`, `/n8n/bridge/calls` and
+/// `/n8n/bridge/tools`.
 pub fn router(runtime: TaskRuntime, bridge: Bridge) -> Router {
     let mount = format!("/{}", crate::server().as_str());
     Router::new()
@@ -54,6 +55,7 @@ pub fn router(runtime: TaskRuntime, bridge: Bridge) -> Router {
             post(result),
         )
         .route(&format!("{mount}/bridge/calls"), post(bridged))
+        .route(&format!("{mount}/bridge/tools"), get(listed))
         .layer(DefaultBodyLimit::max(MAX_BODY_BYTES))
         .with_state(Loopback {
             runtime,
@@ -137,6 +139,12 @@ async fn result(
             StatusCode::SERVICE_UNAVAILABLE.into_response()
         }
     }
+}
+
+/// The bridge table's tools, for the Veoveo Tool node's list. The table is the server's
+/// own declaration, so any caller on loopback may read it.
+async fn listed() -> Json<BridgeTools> {
+    Json(BridgeTools::table())
 }
 
 /// A call of the Veoveo Tool node through the bridge.

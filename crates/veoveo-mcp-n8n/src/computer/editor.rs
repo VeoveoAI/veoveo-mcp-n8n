@@ -3,8 +3,9 @@
 //! workflow; `teams`, the teams the person reaches; and everything else, n8n's editor,
 //! forwarded to n8n's listener without the mount as the owner, whose session the program
 //! holds. The Hub already strips the browser's cookies and credentials both ways. Beside
-//! the mount, only n8n reaches the program: its bridge, its Assistant's model endpoint and
-//! its Assistant's sandbox service, each admitting the token of this start.
+//! the mount, only n8n reaches the program: its bridge and the bridge's tool list, its
+//! Assistant's model endpoint, its Assistant's sandbox service and its Assistant's MCP
+//! endpoint for the person's tools, each admitting the token of this start.
 use std::sync::Arc;
 
 use axum::{
@@ -28,6 +29,7 @@ use super::{
     sandboxes::ComputerSandboxes,
     session::{EditorSession, renewed_session, with_session},
     teams::Checkouts,
+    tools::{self, ComputerTools},
 };
 use crate::{contract::WorkflowName, proxy};
 
@@ -43,11 +45,12 @@ pub struct Editor {
     pub path: String,
 }
 
-/// n8n's Assistant: its model endpoint and its sandbox service.
+/// n8n's Assistant: its model endpoint, its sandbox service and the person's tools.
 #[derive(Clone)]
 pub struct Assistant {
     pub model: ComputerModel,
     pub sandboxes: ComputerSandboxes,
+    pub tools: ComputerTools,
 }
 
 /// The program's routes on its loopback port.
@@ -62,7 +65,15 @@ pub fn router(editor: Editor, bridge: ComputerBridge, assistant: Assistant) -> R
         .with_state(editor)
         .route(
             &format!("{own}/bridge/calls"),
-            post(bridge::call).with_state(bridge),
+            post(bridge::call).with_state(bridge.clone()),
+        )
+        .route(
+            &format!("{own}/bridge/tools"),
+            get(bridge::tools).with_state(bridge),
+        )
+        .route(
+            &format!("{own}/mcp/{{token}}"),
+            post(tools::forward).with_state(assistant.tools),
         )
         .route(MODEL_PATH, post(model::chat).with_state(assistant.model))
         .merge(assistant.sandboxes.routes(&own))

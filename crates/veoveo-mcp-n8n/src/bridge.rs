@@ -16,6 +16,13 @@ use crate::store::RunStore;
 /// The most a bridged call may take; a longer one belongs in a Task of the provider.
 const CALL_TIMEOUT: Duration = Duration::from_secs(120);
 
+/// The variable of n8n's environment that names the bridge, `{base}/n8n/bridge/calls`;
+/// the bridge lists its tools at `{base}/n8n/bridge/tools`.
+pub const BRIDGE_URL: &str = "VEOVEO_BRIDGE_URL";
+/// The variable of n8n's environment that holds a person's Computer's token for its
+/// bridge; a runner sets none, since each run carries its own.
+pub const BRIDGE_TOKEN: &str = "VEOVEO_BRIDGE_TOKEN";
+
 /// The tools n8n may call, each with the provider permission it is called with, which the
 /// server declares in its `uses`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -63,6 +70,35 @@ pub struct BridgeCall {
 pub struct BridgeAnswer {
     pub is_error: bool,
     pub result: Value,
+}
+
+/// The tools a bridge offers the Veoveo Tool node's list, `GET /n8n/bridge/tools`.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct BridgeTools {
+    pub tools: Vec<ListedTool>,
+}
+
+/// One tool of the list: its Hub name, which the node stores, and what it does.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct ListedTool {
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+}
+
+impl BridgeTools {
+    /// The bridge table's tools, which a runner's bridge offers.
+    pub fn table() -> Self {
+        Self {
+            tools: BridgeTool::ALL
+                .into_iter()
+                .map(|tool| ListedTool {
+                    name: tool.hub_name().to_owned(),
+                    description: None,
+                })
+                .collect(),
+        }
+    }
 }
 
 /// Why the bridge refused a call before it reached the Hub.
@@ -163,5 +199,9 @@ mod tests {
         }))
         .unwrap();
         assert_eq!(call.arguments["expression"], "now");
+        assert_eq!(
+            serde_json::to_value(BridgeTools::table()).unwrap(),
+            json!({"tools": [{"name": "time__resolve_time"}]})
+        );
     }
 }

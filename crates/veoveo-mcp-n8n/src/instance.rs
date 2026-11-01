@@ -11,8 +11,9 @@ use serde::Deserialize;
 use veoveo_types::TenantId;
 
 /// Node types no instance admits: n8n's command, SSH, Git and local-file nodes, which
-/// run programs or reach the sandbox's files, and its MCP nodes, since n8n reaches other
-/// servers only through the server's bridge.
+/// run programs or reach the sandbox's files, and the nodes that speak MCP, its MCP nodes
+/// and the Microsoft Agent 365 trigger, whose agent calls Microsoft's MCP servers, since
+/// n8n reaches other servers only through the server's bridge.
 pub const EXCLUDED_NODES: &[&str] = &[
     "n8n-nodes-base.executeCommand",
     "n8n-nodes-base.ssh",
@@ -26,6 +27,7 @@ pub const EXCLUDED_NODES: &[&str] = &[
     "@n8n/n8n-nodes-langchain.mcpClientTool",
     "@n8n/n8n-nodes-langchain.mcpRegistryClientTool",
     "@n8n/n8n-nodes-langchain.mcpTrigger",
+    "@n8n/n8n-nodes-langchain.microsoftAgent365Trigger",
 ];
 
 /// Why `n8n/instance.toml` was refused.
@@ -593,6 +595,10 @@ mod tests {
             ),
             (
                 "tenant = \"reference\"\nnodes = [\"@n8n/n8n-nodes-langchain.mcpClientTool\"]",
+                "which no instance admits",
+            ),
+            (
+                "tenant = \"reference\"\nnodes = [\"@n8n/n8n-nodes-langchain.microsoftAgent365Trigger\"]",
                 "which no instance admits",
             ),
             (

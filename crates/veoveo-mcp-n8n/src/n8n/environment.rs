@@ -408,6 +408,7 @@ mod tests {
             "n8n-nodes-base.ssh",
             "n8n-nodes-base.localFileTrigger",
             "@n8n/n8n-nodes-langchain.mcpClientTool",
+            "@n8n/n8n-nodes-langchain.microsoftAgent365Trigger",
         ] {
             assert!(excluded.iter().any(|excluded| excluded == node), "{node}");
         }

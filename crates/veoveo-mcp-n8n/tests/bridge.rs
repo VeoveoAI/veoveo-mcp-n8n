@@ -1,5 +1,6 @@
-//! The bridge through the SDK's in-process mesh: a running run's token calls a tool of the
-//! bridge table for the run's caller, through the mesh's exchange of the run's Task, with
+//! The bridge through the SDK's in-process mesh: the bridge lists its table's tools to any
+//! caller on loopback; a running run's token calls a tool of the bridge table for the
+//! run's caller, through the mesh's exchange of the run's Task, with
 //! the permission the server declared in its `uses`; a tool outside the table, a token of
 //! no run and the token of a run that ended are refused, and a caller without the
 //! provider's permission gets the Hub's refusal. The fake Time server in `support` stands
@@ -56,6 +57,17 @@ async fn the_bridge_calls_only_table_tools_with_a_running_runs_token() {
         assert_eq!(answer["result"]["caller"], "https://idp.example.com#user-1");
         assert_eq!(answer["result"]["actingServer"], "n8n");
         assert_eq!(answer["result"]["actingTask"], true);
+
+        // The node's tool list is the table's, with no token.
+        let listed: Value = reqwest::Client::new()
+            .get(format!("{}n8n/bridge/tools", harness.loopback))
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(listed, json!({"tools": [{"name": "time__resolve_time"}]}));
 
         // Another tool, even of the same server, is not in the table.
         let (code, answer) = bridge(&harness, call(&token, "time__create_event")).await;

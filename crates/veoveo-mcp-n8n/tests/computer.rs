@@ -6,8 +6,12 @@
 //! branch, or a repository no team serves, opens nothing; `teams` lists the teams; the
 //! editor reaches n8n without the mount as its owner, and its answers set no cookie; the
 //! bridge admits only the Computer's token and calls the Hub with the Computer's own
-//! credential; the Assistant's model endpoint admits only that token and forwards to a
-//! fake provider with the Computer's model placeholder, streaming; its sandbox service
+//! credential, and lists the tools the Hub lists to the owner by their Hub names; the
+//! Assistant's MCP endpoint admits only the token in its path and forwards a real MCP
+//! client's requests, `server/discover` among them, to the Hub with the Computer's own
+//! credential instead of the client's and without cookies; the Assistant's model endpoint
+//! admits only that token and forwards to a fake provider with the Computer's model
+//! placeholder, streaming; its sandbox service
 //! keeps each sandbox in a directory of the person's home, runs commands there with `bash`
 //! as the test's user, and keeps file calls inside it; the start turns the Assistant's web
 //! search off as the owner. Every value is synthetic fixture data; nothing here runs n8n,
@@ -31,9 +35,9 @@ use rmcp::{
     ServerHandler,
     model::{
         CallToolRequestParams, CallToolResponse, CallToolResult, ContentBlock, ErrorData,
-        ListResourcesResult, PaginatedRequestParams, ReadResourceRequestParams,
+        ListResourcesResult, ListToolsResult, PaginatedRequestParams, ReadResourceRequestParams,
         ReadResourceResponse, ReadResourceResult, Resource, ResourceContents, ServerCapabilities,
-        ServerConfig,
+        ServerConfig, Tool,
     },
     service::{RequestContext, RoleServer},
     transport::streamable_http_server::StreamableHttpService,
@@ -42,11 +46,14 @@ use secrecy::SecretString;
 use serde_json::{Value, json};
 use tower::ServiceExt;
 use url::Url;
-use veoveo_hub_sdk::client::{HubClient, StaticBearer};
+use veoveo_hub_sdk::{
+    client::{HubClient, StaticBearer},
+    hub::HubToolName,
+};
 use veoveo_mcp_n8n::{
     computer::{
-        Assistant, Checkouts, ComputerBridge, ComputerModel, ComputerSandboxes, Editor,
-        EditorSession, router,
+        Assistant, Checkouts, ComputerBridge, ComputerModel, ComputerSandboxes, ComputerTools,
+        Editor, EditorSession, router,
     },
     n8n::{N8nClient, OWNER_EMAIL},
 };
@@ -316,7 +323,8 @@ async fn fake_provider() -> (Url, ModelCalls) {
 
 /// The Hub's MCP endpoint as the Computer's owner sees it: two runners of the n8n
 /// repository, `marketing`, which names its tracked branch, and `sales`, which does not,
-/// beside another server's resource; and one tool.
+/// beside another server's resource; and two tools, beside a name no bridged call can
+/// name.
 #[derive(Clone, Default)]
 struct FakeHub {
     calls: Arc<Mutex<Vec<CallToolRequestParams>>>,
@@ -373,6 +381,25 @@ impl ServerHandler for FakeHub {
         ])
         .into())
     }
+    async fn list_tools(
+        &self,
+        _: Option<PaginatedRequestParams>,
+        _: RequestContext<RoleServer>,
+    ) -> Result<ListToolsResult, ErrorData> {
+        let schema = Arc::new(serde_json::Map::from_iter([(
+            "type".to_owned(),
+            json!("object"),
+        )]));
+        Ok(ListToolsResult::with_all_items(vec![
+            Tool::new(
+                "time__resolve_time",
+                "Resolves a time expression",
+                schema.clone(),
+            ),
+            Tool::new("n8n__run", "Runs a team's workflow", schema.clone()),
+            Tool::new("unprefixed", "Not a tool through the Hub", schema),
+        ]))
+    }
     async fn call_tool(
         &self,
         request: CallToolRequestParams,
@@ -399,11 +426,13 @@ async fn fake_hub() -> (Url, FakeHub) {
             .nest_service("/mcp/computer", service)
             .layer(axum::middleware::from_fn(
                 |request: axum::extract::Request, next: axum::middleware::Next| async move {
-                    // The proxy replaces this placeholder with the owner's token.
+                    // The proxy replaces this placeholder with the owner's token. Nothing
+                    // of the caller's credentials or cookies reaches the Hub.
                     assert_eq!(
                         request.headers().get(header::AUTHORIZATION).unwrap(),
                         format!("Bearer {PLACEHOLDER}").as_str()
                     );
+                    assert!(request.headers().get(header::COOKIE).is_none());
                     next.run(request).await
                 },
             ));
@@ -468,7 +497,7 @@ async fn fixture() -> Fixture {
         client,
     ));
     let hub_client = HubClient::new(
-        hub_url,
+        hub_url.clone(),
         reqwest::Client::builder().no_proxy().build().unwrap(),
         StaticBearer::new(PLACEHOLDER),
     );
@@ -503,6 +532,12 @@ async fn fixture() -> Fixture {
                 SecretString::from(TOKEN),
                 &["CARGO_PKG_NAME"],
             ),
+            tools: ComputerTools {
+                http: reqwest::Client::builder().no_proxy().build().unwrap(),
+                endpoint: hub_url,
+                bearer: SecretString::from(PLACEHOLDER),
+                token: SecretString::from(TOKEN),
+            },
         },
     );
     Fixture {
@@ -729,6 +764,115 @@ async fn the_editor_acts_as_the_owner_and_the_bridge_as_the_computer() {
 }
 
 // ---------------------------------------------------------------- Assistant --
+
+#[tokio::test]
+async fn the_bridge_lists_the_owner_s_tools_by_their_hub_names() {
+    let fixture = fixture().await;
+    let request = |bearer: Option<&str>| {
+        let mut builder = Request::get("/n8n/bridge/tools");
+        if let Some(bearer) = bearer {
+            builder = builder.header(header::AUTHORIZATION, format!("Bearer {bearer}"));
+        }
+        builder.body(Body::empty()).unwrap()
+    };
+    let (status, _, body) = fixture.send(request(Some(TOKEN))).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        serde_json::from_str::<Value>(&body).unwrap(),
+        json!({"tools": [
+            {"name": "n8n__run", "description": "Runs a team's workflow"},
+            {"name": "time__resolve_time", "description": "Resolves a time expression"},
+        ]})
+    );
+    for bearer in [None, Some("another-token")] {
+        let (status, _, _) = fixture.send(request(bearer)).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED, "{bearer:?}");
+    }
+}
+
+#[tokio::test]
+async fn the_assistant_reaches_the_person_s_tools_through_the_hub() {
+    let fixture = fixture().await;
+    let base = serve(fixture.routes.clone()).await;
+    let endpoint = base.join(&format!("n8n/mcp/{TOKEN}")).unwrap();
+
+    // A real MCP client, with a credential of its own that the program replaces with the
+    // Computer's: the fake Hub refuses any other.
+    let client = HubClient::new(
+        endpoint.clone(),
+        reqwest::Client::builder().no_proxy().build().unwrap(),
+        StaticBearer::new("the-client-s-own-credential"),
+    );
+    let listed = client.tools().await.unwrap();
+    let mut names: Vec<_> = listed
+        .items
+        .iter()
+        .map(|tool| tool.name.to_string())
+        .collect();
+    names.sort();
+    assert_eq!(names, ["n8n__run", "time__resolve_time", "unprefixed"]);
+    let result = client
+        .call_tool(
+            HubToolName::parse("time__resolve_time").unwrap(),
+            serde_json::Map::from_iter([("expression".to_owned(), json!("now"))]),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        result.structured_content,
+        Some(json!({"tool": "time__resolve_time", "arguments": {"expression": "now"}}))
+    );
+    assert_eq!(fixture.hub.calls.lock().unwrap().len(), 1);
+
+    // The Hub answers `server/discover` itself; the request's protocol headers pass and
+    // its cookies do not.
+    let discover = |url: Url| {
+        reqwest::Client::builder()
+            .no_proxy()
+            .build()
+            .unwrap()
+            .post(url)
+            .header(header::CONTENT_TYPE, "application/json")
+            .header(header::ACCEPT, "application/json, text/event-stream")
+            .header(header::COOKIE, "n8n-auth=browser-session")
+            .header("MCP-Protocol-Version", "2026-07-28")
+            .header("Mcp-Method", "server/discover")
+            .body(
+                json!({
+                    "jsonrpc": "2.0", "id": 1, "method": "server/discover",
+                    "params": {"_meta": {
+                        "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+                        "io.modelcontextprotocol/clientInfo": {"name": "n8n", "version": "2.46.0"},
+                        "io.modelcontextprotocol/clientCapabilities": {}
+                    }}
+                })
+                .to_string(),
+            )
+            .send()
+    };
+    let answer = discover(endpoint.clone()).await.unwrap();
+    assert_eq!(answer.status(), StatusCode::OK);
+    assert!(answer.headers().get(header::SET_COOKIE).is_none());
+    let body = answer.text().await.unwrap();
+    assert!(
+        body.contains("supportedVersions") && body.contains("2026-07-28"),
+        "{body}"
+    );
+
+    // Another token is refused before anything reaches the Hub, and only POST is served.
+    let refused = discover(base.join("n8n/mcp/another-token").unwrap())
+        .await
+        .unwrap();
+    assert_eq!(refused.status(), StatusCode::UNAUTHORIZED);
+    let (status, _, _) = fixture
+        .send(
+            Request::get(format!("/n8n/mcp/{TOKEN}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+    assert_eq!(status, StatusCode::METHOD_NOT_ALLOWED);
+}
 
 #[tokio::test]
 async fn the_assistant_s_model_is_the_computer_s() {

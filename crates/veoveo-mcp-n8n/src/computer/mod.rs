@@ -6,8 +6,9 @@
 //! repository on demand at its runner's tracked branch, applies its workflows as drafts
 //! and writes back what the person saves. It is the one program of the Computer that
 //! calls the Hub and the model for n8n: n8n's Veoveo Tool node calls its loopback bridge,
-//! and n8n's Assistant its loopback model endpoint and its sandbox service, whose
-//! sandboxes are directories of the person's home.
+//! and n8n's Assistant its loopback model endpoint, its sandbox service, whose sandboxes
+//! are directories of the person's home, and its MCP endpoint, which forwards to the
+//! person's tools through the Hub.
 mod bridge;
 mod config;
 mod editor;
@@ -17,6 +18,7 @@ mod records;
 mod sandboxes;
 mod session;
 mod teams;
+mod tools;
 
 use std::{net::SocketAddr, path::Path, sync::Arc, time::Duration};
 
@@ -25,6 +27,7 @@ use clap::Parser;
 use secrecy::{ExposeSecret, SecretString};
 use veoveo_hub_sdk::client::{HubClient, StaticBearer};
 
+pub use crate::bridge::{BRIDGE_TOKEN, BRIDGE_URL};
 pub use bridge::ComputerBridge;
 pub use editor::{Assistant, Editor, router};
 pub use hub::{Team, status_link, teams as list_teams};
@@ -33,6 +36,7 @@ pub use records::TeamRecords;
 pub use sandboxes::{ComputerSandboxes, WORKSPACE};
 pub use session::EditorSession;
 pub use teams::{Checkouts, file_name_of, tag_name};
+pub use tools::{ComputerTools, tools_url};
 
 use crate::n8n::{
     COMPUTER_API_KEY_SCOPES, N8n, N8nClient, N8nEditor, N8nSettings, N8nStorage, OWNER_EMAIL,
@@ -41,9 +45,6 @@ use crate::n8n::{
 
 /// Where the Hub forwards the Computer's program `n8n`, after the Computer's base path.
 pub const MOUNT: &str = "/apps/n8n/";
-/// The variables of n8n's environment that name the Computer's bridge and its token.
-pub const BRIDGE_URL: &str = "VEOVEO_BRIDGE_URL";
-pub const BRIDGE_TOKEN: &str = "VEOVEO_BRIDGE_TOKEN";
 /// The Computer's credential placeholders, which n8n's process never receives: only this
 /// program calls the Hub, Lore and the model for n8n.
 const WITHHELD: &[&str] = &[
@@ -59,8 +60,9 @@ const ENCRYPTION_KEY: &str = "encryption-key";
 
 /// n8n's Assistant in the Computer: the installation's `model` through this program's
 /// loopback endpoint on `port`, the sandboxes of its sandbox service, each a home under
-/// `homes`, both admitted with `token`, and no browser use. Web search is off in n8n's
-/// settings, which the program sets once n8n runs.
+/// `homes`, and the person's tools through its MCP endpoint, all admitted with `token`,
+/// and no browser use. Web search is off in n8n's settings, which the program sets once
+/// n8n runs.
 pub fn assistant_environment(
     port: u16,
     token: &SecretString,
@@ -93,6 +95,11 @@ pub fn assistant_environment(
         ),
         // The fork's variable: each sandbox's home is `{homes}/{id}`.
         ("N8N_SANDBOX_SERVICE_HOMES", homes.display().to_string()),
+        // n8n's `name=url` pairs carry no headers, so the URL holds the token.
+        (
+            "N8N_INSTANCE_AI_MCP_SERVERS",
+            format!("veoveo={}", tools_url(port, token)),
+        ),
     ]
 }
 
@@ -202,9 +209,15 @@ pub async fn run() -> Result<()> {
                 http: http.clone(),
                 endpoint: args.model_endpoint.clone(),
                 key: args.model_key.clone(),
-                token,
+                token: token.clone(),
             },
             sandboxes,
+            tools: ComputerTools {
+                http: http.clone(),
+                endpoint: args.hub_mcp.clone(),
+                bearer: args.hub_bearer.clone(),
+                token,
+            },
         },
     );
     let writing = tokio::spawn(write_back(
@@ -275,7 +288,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn n8n_s_assistant_uses_the_program_s_model_and_sandboxes() {
+    fn n8n_s_assistant_uses_the_program_s_model_sandboxes_and_tools() {
         let token = SecretString::from("start-token");
         let environment: BTreeMap<_, _> = assistant_environment(
             5680,
@@ -298,6 +311,10 @@ mod tests {
             ("N8N_SANDBOX_SERVICE_URL", "http://127.0.0.1:5680/n8n"),
             ("N8N_SANDBOX_SERVICE_API_KEY", "start-token"),
             ("N8N_SANDBOX_SERVICE_HOMES", "/sandbox/n8n/.sandboxes"),
+            (
+                "N8N_INSTANCE_AI_MCP_SERVERS",
+                "veoveo=http://127.0.0.1:5680/n8n/mcp/start-token",
+            ),
         ]);
         assert_eq!(
             environment
@@ -306,8 +323,9 @@ mod tests {
                 .collect::<BTreeMap<_, _>>(),
             expected
         );
-        // The model's credential stays with the program.
+        // The model's and the Hub's credentials stay with the program.
         assert!(!environment.contains_key("DEEPINFRA_API_KEY"));
         assert!(WITHHELD.contains(&"DEEPINFRA_API_KEY"));
+        assert!(WITHHELD.contains(&"COMPUTER_HUB_REFERENCE"));
     }
 }

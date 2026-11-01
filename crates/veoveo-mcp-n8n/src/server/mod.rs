@@ -201,7 +201,12 @@ async fn serve(
             .with_context(|| format!("finding the Veoveo nodes at {}", args.n8n_nodes.display()))?,
         editor: None,
         api_key_scopes: API_KEY_SCOPES,
-        extra: Vec::new(),
+        // The Veoveo Tool node lists the bridge table's tools from the bridge; each run
+        // still names the bridge and its token.
+        extra: vec![(
+            crate::bridge::BRIDGE_URL,
+            loopback::bridge_url(&loopback::base()).to_string(),
+        )],
         withheld: &[],
     };
     let tenant = stored_tenant(&instance.tenant)?;
