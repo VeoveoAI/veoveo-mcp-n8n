@@ -604,7 +604,9 @@ credential rule names it.
     owner's, as for OpenCode. The fork's MCP client offers MCP 2026-07-28 first and the
     Hub serves only it, so the Assistant speaks 2026-07-28 to the Hub. A path with
     another token is refused with 401, and another method with 405. n8n names each tool
-    `veoveo_{server}__{tool}` to its model.
+    `veoveo_{server}__{tool}` to its model. The environment alone names this server: the
+    fork keeps n8n's environment-managed Assistant settings out of the settings n8n saves,
+    so the program's save of `searchDisabled` at each start keeps no server or token.
   - *Permission and confirmation.* n8n's own. A server from `N8N_INSTANCE_AI_MCP_SERVERS`
     carries no tool permissions of its own, so the Assistant's two MCP permissions
     apply, which the owner sets in the Assistant's settings: `mcpRead`, by default
