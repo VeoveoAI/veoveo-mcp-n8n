@@ -30,8 +30,9 @@ through the server and the Hub. A runner serves no editor.
 - n8n calls into Veoveo only through the bridge, for tools in its typed table and only
   within a running run.
 - A runner serves the one tenant its team's `n8n/instance.toml` names.
-- `veoveo-n8n-computer` is the only program of a Computer that calls the Hub for n8n;
-  n8n's process gets none of the Computer's placeholders. It applies a team's workflows
+- `veoveo-n8n-computer` is the only program of a Computer that calls the Hub and the
+  model for n8n; n8n's process gets none of the Computer's placeholders, and its
+  Assistant's sandbox commands get none either. It applies a team's workflows
   as drafts, never published, and writes saved changes back to the team's checkout;
   it never commits or pushes.
 - n8n comes from the VeoveoAI fork at a pinned revision. Configure it here; change it only
@@ -46,7 +47,8 @@ through the server and the Hub. A runner serves no editor.
   in a container. `tests/runs.rs`, `tests/bridge.rs` and `tests/mcp.rs` use the fake n8n
   in `tests/support`; `tests/team.rs` reads the template and the teams in
   `tests/fixtures/`; `tests/computer.rs` drives `veoveo-n8n-computer`'s routes against
-  a fake n8n, a fake Hub MCP endpoint and a fake Lore.
+  a fake n8n, a fake Hub MCP endpoint, a fake Lore and a fake model provider, and runs
+  its sandboxes' commands with `bash`.
 - `cargo test -p veoveo-mcp-n8n --no-default-features --features contract` checks the
   contract alone.
 - Every statement is a `.sql` file under `src/store/workflows/` or `src/store/runs/` run

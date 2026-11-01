@@ -128,7 +128,7 @@ the Hub gives that runner alone, and a runner serves one tenant, the one the tea
 | `loopback` | The server's loopback listener, where the Veoveo Result posts a run's output and the Veoveo Tool calls the bridge |
 | `hooks` | Public webhook deliveries to n8n's webhook listener |
 | `proxy` | Forwarding a request to n8n's listener, for the hooks and a Computer's editor |
-| `computer` | [`veoveo-n8n-computer`](#n8n-in-a-persons-computer): n8n in a person's own Computer, its editor, the teams' checkouts and its bridge |
+| `computer` | [`veoveo-n8n-computer`](#n8n-in-a-persons-computer): n8n in a person's own Computer, its editor, the teams' checkouts, its bridge and its Assistant's model endpoint and sandbox service |
 | `store` | The server's own tables in the `n8n` schema |
 | `server` | Configuration, registration with the Hub, the database login, the process instance and serving |
 
@@ -336,7 +336,9 @@ run and calls into no server.
 ### Models
 
 n8n's AI nodes call the model endpoint through OpenShell's proxy with the model
-provider's placeholder. The Hub is not a model proxy.
+provider's placeholder. The Hub is not a model proxy. In a person's Computer, n8n's
+Assistant reaches the Computer's model through `veoveo-n8n-computer`
+([The Assistant](#n8n-in-a-persons-computer)).
 
 ## Runs
 
@@ -471,9 +473,9 @@ A server that is no runner names no link: the overview reads `n8n://status` and 
 
 `veoveo-n8n-computer` runs n8n in a person's own Computer, as a program of the Computer
 version that the Hub forwards `/computer/c/{computer}/apps/n8n/…` to on a loopback port,
-5680 by default. It is the one program of the Computer that calls the Hub for n8n: n8n's
-process receives none of the Computer's credential placeholders and no credential rule
-names it.
+5680 by default. It is the one program of the Computer that calls the Hub and the model
+for n8n: n8n's process receives none of the Computer's credential placeholders and no
+credential rule names it.
 
 - **n8n.** It starts n8n on loopback, as a runner does, with SQLite in n8n's user folder
   under `$HOME/.veoveo/n8n`, every node type but the excluded ones, and the Veoveo nodes.
@@ -513,8 +515,9 @@ names it.
   program keeps out of n8n's process. Nothing is committed or pushed: the person, or
   their agent, commits and pushes with Lore, and the team's runner applies the push.
 - **The Computer image.** The root `Dockerfile`'s `computer` target holds what a
-  Computer adds for n8n: Node.js and n8n from the fork's image at `/usr/local/bin/node`
-  and `/usr/local/lib/node_modules/n8n`, `veoveo-n8n-computer` at `/usr/local/bin`, built
+  Computer adds for n8n: Node.js, npm and n8n from the fork's image at
+  `/usr/local/bin/node`, `/usr/local/lib/node_modules/npm` and
+  `/usr/local/lib/node_modules/n8n`, `veoveo-n8n-computer` at `/usr/local/bin`, built
   as the server is, and the Veoveo nodes at `/opt/veoveo/n8n/nodes`. The installation
   copies them into its Computer image, which starts from its factory image, a Debian
   trixie image as the fork's and the build's are, and adds `librdkafka1`, which n8n's
@@ -523,12 +526,55 @@ names it.
   exits, and `exec`s OpenCode in the foreground, so n8n never delays or stops OpenCode
   and its output, failures included, is the Computer's own. The Computer version names
   the program `n8n` on its port in `computers.apps`, and its policy's `hub` and `model`
-  rules name `/usr/local/bin/veoveo-n8n-computer`.
+  rules name `/usr/local/bin/veoveo-n8n-computer`. The Computer image names the
+  Assistant's model in `VEOVEO_N8N_MODEL`, as its OpenCode configuration names
+  OpenCode's.
 - **The bridge.** The Veoveo Tool node finds the program's loopback bridge,
   `/n8n/bridge/calls`, and a token of this start in n8n's environment when no run names
   them, and posts the runner's request shape. The program admits the token, a tool's
   Hub name `{server}__{tool}`, and calls it through the Hub as the owner with the
   Computer's own credential, so the Hub decides each call as it decides the owner's.
+- **The Assistant.** n8n's Assistant (Instance AI) is configured from n8n's environment
+  and reaches the model and its sandboxes only through the program, which admits the
+  token of this start on each, as on the bridge:
+  - *The model.* `N8N_INSTANCE_AI_MODEL` is `custom/{VEOVEO_N8N_MODEL}` and
+    `N8N_INSTANCE_AI_MODEL_URL` is `http://127.0.0.1:{port}/v1/openai`, with the token as
+    its key. n8n's `custom/` provider with a URL is its OpenAI-compatible client, which
+    posts only `{url}/chat/completions` with the model's name after `custom/`. The
+    program serves `POST /v1/openai/chat/completions`, the provider's own path, and
+    forwards it to `VEOVEO_N8N_MODEL_ENDPOINT`, DeepInfra's chat completions by default,
+    with `DEEPINFRA_API_KEY`, the Computer's placeholder, as its bearer, which the
+    `model` rule's binding replaces with the owner's key. The request goes whole, with
+    its length, to the proxy that inspects it, and the answer streams. n8n's
+    model catalog, `https://models.dev/api.json`, gives costs and checks of the chat
+    model nodes the Assistant writes; it is optional to n8n, and the Computer's internet
+    rule, which admits names of three labels or more, refuses that two-label name.
+  - *The sandboxes.* `N8N_INSTANCE_AI_SANDBOX_ENABLED` is `true` with the provider
+    `n8n-sandbox`, whose service is the program at `http://127.0.0.1:{port}/n8n`, with
+    the token as its key. The program serves the n8n sandbox service's API as
+    `@n8n/sandbox-client` 0.1.1 calls it: sandboxes created by id or anew, read and
+    deleted; executions streamed as NDJSON events (`started`, `stdout`, `stderr`, `exit`
+    or `error`, each with its `seq`), the same `exec_id` reading the same execution,
+    followed after a `seq`, and deleted, which kills a running one; and the file calls.
+    Each sandbox is a directory of the person's home, `$HOME/n8n/.sandboxes/{id}`, which
+    is its home; the Assistant works in its `workspace`. A command runs as the person
+    with `bash -c` in its own process group, from the workspace or the directory it
+    names in the sandbox, with the sandbox's home as `HOME`, the person's npm cache, the
+    request's variables and the program's environment without the variables n8n never
+    receives; at its limit, and once it exits, the program kills its group. A file call's
+    path is absolute in the sandbox or relative to its home, and a path outside it is
+    refused. n8n states its sandboxes' workspace in the Assistant's prompt, and the
+    workspace refuses absolute paths outside it, so the fork's `N8N_SANDBOX_SERVICE_HOMES`
+    names `$HOME/n8n/.sandboxes`, and n8n takes `{N8N_SANDBOX_SERVICE_HOMES}/{id}` for a
+    sandbox's home instead of `/home/user`. A sandbox stays until n8n deletes it, and an
+    execution's events until n8n deletes them, as the client does after the exit. The
+    Assistant's workspace setup installs its packages with npm from the registry, through
+    the internet rule.
+  - *Search and browser use.* The program turns the Assistant's web search off in n8n's
+    settings at each start, as the owner (`PUT /rest/instance-ai/settings` with
+    `{"searchDisabled": true}`): a person's own n8n has no search provider, and n8n
+    counts the Assistant as set up once its model, its sandbox and search are each
+    configured or off. `N8N_INSTANCE_AI_BROWSER_USE_ENABLED` is `false`.
 
 ## Webhooks
 
@@ -614,7 +660,8 @@ them new sandboxes.
 |---|---|
 | `src/contract` unit tests | Workflow names, execution IDs and typed addresses |
 | `src/instance`, `src/n8n`, `src/workflows` unit tests | The instance and admitted files' admission and a team's use of only what is admitted, n8n's environment without an editor, n8n's reported version, the generated secrets, the credential import document, the workflow write shape and webhook URLs, and each apply decision |
-| `tests/computer.rs` | `veoveo-n8n-computer` against a fake n8n, a fake Hub MCP endpoint and a fake Lore: `open` clones a team once at its tracked branch, applies tagged drafts and redirects to the workflow; a saved change and a new tagged workflow are written back in the file form; a team without a tracked branch or a repository no team serves opens nothing; `teams` lists them; the editor reaches n8n without the mount as its owner and sets no cookie; the bridge admits only the Computer's token and calls the Hub with the Computer's credential |
+| `src/computer` unit tests | The program's flags, n8n's Assistant environment, sandbox paths and ids, and command output as text across reads |
+| `tests/computer.rs` | `veoveo-n8n-computer` against a fake n8n, a fake Hub MCP endpoint, a fake Lore and a fake model provider: `open` clones a team once at its tracked branch, applies tagged drafts and redirects to the workflow; a saved change and a new tagged workflow are written back in the file form; a team without a tracked branch or a repository no team serves opens nothing; `teams` lists them; the editor reaches n8n without the mount as its owner and sets no cookie; the bridge admits only the Computer's token and calls the Hub with the Computer's credential; the model endpoint admits only that token and streams the provider's answer to a request it sent with the Computer's model placeholder; the sandbox service admits only that token, keeps a sandbox in a directory of the person's home, runs commands there as the test's user with its own `HOME` and without withheld variables, reads one execution once per `exec_id`, resumes after a `seq`, kills a command at its limit or when deleted, keeps file calls in the sandbox and removes its directory; the start's search call reaches n8n as the owner |
 | `tests/team.rs` | The team template and the tests' team read as `n8n/admitted.toml` admits them; a team without its optional files uses the Veoveo nodes alone; a team node type not admitted stops the start with a message naming it; the template's rules name n8n's program by its image path |
 | `tests/workflows.rs` | Against a real n8n on a migrated database: n8n migrates as the server's login, which may not create in the database, and its tables are prefixed and belong to the group role; n8n reports its version; the key is minted and kept, a credential imported; applying the template's webhook example creates and publishes, keeps, updates, replaces a version saved in n8n and archives by file name, records digests and versions, and its production webhook answers; a stale key in n8n's settings file over a fresh schema starts n8n with the database's key; a restart reads n8n's key from the database and reuses the API key; a new sandbox's empty disk starts with the key the database keeps, a new owner password and a newly minted API key; n8n's tables with no key refuse the start; the template's and the tests' team's workflows apply with the Veoveo nodes, and `hello-run` runs as a Task to its Veoveo Result's output, its execution recorded as the Task caller's |
 | `tests/runs.rs` | Through the SDK's in-process mesh and a fake n8n: a run completes from its Veoveo Result, its execution recorded as its Task caller's, fails and is stopped from n8n's execution through the status check, is cancelled by its caller, which stops the execution, and a restarted worker keeps waiting on the recorded execution; a run's job names its n8n instance, so a new n8n's execution numbers never meet an earlier one's |

@@ -1,5 +1,6 @@
 //! `veoveo-n8n-computer`'s configuration, from the Computer's environment. Every flag has
-//! its variable; the Computer template sets the Hub's, Lore's and the Computer's own.
+//! its variable; the Computer template sets the Hub's, Lore's, the model's and the
+//! Computer's own.
 use std::path::PathBuf;
 
 use clap::Parser;
@@ -49,6 +50,22 @@ pub(super) struct Args {
     /// How often, in seconds, a change saved in the editor is written back to its file.
     #[arg(long, env = "VEOVEO_N8N_SYNC_SECONDS", default_value_t = 5)]
     pub sync_seconds: u64,
+    /// The model n8n's Assistant uses, as the model's provider names it, such as
+    /// `XiaomiMiMo/MiMo-V2.6-Pro`: the installation chooses it, as it chooses OpenCode's.
+    #[arg(long, env = "VEOVEO_N8N_MODEL")]
+    pub model: String,
+    /// The provider's OpenAI-compatible chat completions endpoint, which the program
+    /// forwards n8n's model requests to.
+    #[arg(
+        long,
+        env = "VEOVEO_N8N_MODEL_ENDPOINT",
+        default_value = "https://api.deepinfra.com/v1/openai/chat/completions"
+    )]
+    pub model_endpoint: Url,
+    /// The Computer's model credential: the placeholder the proxy replaces with the
+    /// owner's key on the model's endpoint.
+    #[arg(long, env = "DEEPINFRA_API_KEY", hide_env_values = true, value_parser = parse_secret)]
+    pub model_key: SecretString,
 }
 
 fn parse_secret(value: &str) -> Result<SecretString, String> {
@@ -85,9 +102,17 @@ mod tests {
             "placeholder",
             "--lore-remote",
             "grpcs://lore.example:41337",
+            "--model",
+            "XiaomiMiMo/MiMo-V2.6-Pro",
+            "--model-key",
+            "model-placeholder",
         ])
         .unwrap();
         assert_eq!(args.port, 5680);
+        assert_eq!(
+            args.model_endpoint.as_str(),
+            "https://api.deepinfra.com/v1/openai/chat/completions"
+        );
         assert_eq!(
             args.editor_path(),
             "/computer/c/019a5b30-0000-7000-8000-000000000001/apps/n8n/"

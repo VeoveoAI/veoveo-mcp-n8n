@@ -5,32 +5,38 @@
 //! lists the teams the person reaches through the Hub as the owner, clones a team's
 //! repository on demand at its runner's tracked branch, applies its workflows as drafts
 //! and writes back what the person saves. It is the one program of the Computer that
-//! calls the Hub for n8n: n8n's Veoveo Tool node calls its loopback bridge.
+//! calls the Hub and the model for n8n: n8n's Veoveo Tool node calls its loopback bridge,
+//! and n8n's Assistant its loopback model endpoint and its sandbox service, whose
+//! sandboxes are directories of the person's home.
 mod bridge;
 mod config;
 mod editor;
 mod hub;
+mod model;
 mod records;
+mod sandboxes;
 mod session;
 mod teams;
 
-use std::{net::SocketAddr, sync::Arc, time::Duration};
+use std::{net::SocketAddr, path::Path, sync::Arc, time::Duration};
 
 use anyhow::{Context, Result};
 use clap::Parser;
-use secrecy::ExposeSecret;
+use secrecy::{ExposeSecret, SecretString};
 use veoveo_hub_sdk::client::{HubClient, StaticBearer};
 
 pub use bridge::ComputerBridge;
-pub use editor::{Editor, router};
+pub use editor::{Assistant, Editor, router};
 pub use hub::{Team, status_link, teams as list_teams};
+pub use model::{ComputerModel, MODEL_PATH};
 pub use records::TeamRecords;
+pub use sandboxes::{ComputerSandboxes, WORKSPACE};
 pub use session::EditorSession;
 pub use teams::{Checkouts, file_name_of, tag_name};
 
 use crate::n8n::{
-    COMPUTER_API_KEY_SCOPES, N8n, N8nClient, N8nEditor, N8nSettings, N8nStorage, STOP_GRACE,
-    StateDirectory, generate_secret,
+    COMPUTER_API_KEY_SCOPES, N8n, N8nClient, N8nEditor, N8nSettings, N8nStorage, OWNER_EMAIL,
+    STOP_GRACE, StateDirectory, generate_secret,
 };
 
 /// Where the Hub forwards the Computer's program `n8n`, after the Computer's base path.
@@ -50,6 +56,45 @@ const WITHHELD: &[&str] = &[
 ];
 const OWNER_PASSWORD: &str = "owner-password";
 const ENCRYPTION_KEY: &str = "encryption-key";
+
+/// n8n's Assistant in the Computer: the installation's `model` through this program's
+/// loopback endpoint on `port`, the sandboxes of its sandbox service, each a home under
+/// `homes`, both admitted with `token`, and no browser use. Web search is off in n8n's
+/// settings, which the program sets once n8n runs.
+pub fn assistant_environment(
+    port: u16,
+    token: &SecretString,
+    model: &str,
+    homes: &Path,
+) -> Vec<(&'static str, String)> {
+    let local = format!("http://127.0.0.1:{port}");
+    let base = MODEL_PATH
+        .strip_suffix("/chat/completions")
+        .expect("the model's path ends in /chat/completions");
+    vec![
+        // n8n's `custom/` provider with a URL calls `{url}/chat/completions` with the
+        // model's name after `custom/`.
+        ("N8N_INSTANCE_AI_MODEL", format!("custom/{model}")),
+        ("N8N_INSTANCE_AI_MODEL_URL", format!("{local}{base}")),
+        (
+            "N8N_INSTANCE_AI_MODEL_API_KEY",
+            token.expose_secret().to_owned(),
+        ),
+        ("N8N_INSTANCE_AI_BROWSER_USE_ENABLED", "false".to_owned()),
+        ("N8N_INSTANCE_AI_SANDBOX_ENABLED", "true".to_owned()),
+        ("N8N_INSTANCE_AI_SANDBOX_PROVIDER", "n8n-sandbox".to_owned()),
+        (
+            "N8N_SANDBOX_SERVICE_URL",
+            format!("{local}/{}", crate::server().as_str()),
+        ),
+        (
+            "N8N_SANDBOX_SERVICE_API_KEY",
+            token.expose_secret().to_owned(),
+        ),
+        // The fork's variable: each sandbox's home is `{homes}/{id}`.
+        ("N8N_SANDBOX_SERVICE_HOMES", homes.display().to_string()),
+    ]
+}
 
 pub async fn run() -> Result<()> {
     let _ = rustls::crypto::ring::default_provider().install_default();
@@ -73,6 +118,22 @@ pub async fn run() -> Result<()> {
         args.port,
         crate::server().as_str()
     );
+    let sandboxes = ComputerSandboxes::new(
+        args.home.join("n8n").join(".sandboxes"),
+        &args.home,
+        token.clone(),
+        WITHHELD,
+    );
+    let mut extra = vec![
+        (BRIDGE_URL, bridge_url),
+        (BRIDGE_TOKEN, token.expose_secret().to_owned()),
+    ];
+    extra.extend(assistant_environment(
+        args.port,
+        &token,
+        &args.model,
+        sandboxes.homes(),
+    ));
     let settings = N8nSettings {
         program: args.n8n_program.clone(),
         user_folder: state.user_folder(),
@@ -87,15 +148,18 @@ pub async fn run() -> Result<()> {
             base_url: editor_url,
         }),
         api_key_scopes: COMPUTER_API_KEY_SCOPES,
-        extra: vec![
-            (BRIDGE_URL, bridge_url),
-            (BRIDGE_TOKEN, token.expose_secret().to_owned()),
-        ],
+        extra,
         withheld: WITHHELD,
     };
     let mut n8n = N8n::start(&settings, &state, key, &password, &[], |_| None)
         .await
         .context("starting n8n")?;
+    if let Err(error) = disable_assistant_search(&password).await {
+        tracing::error!(
+            error = format!("{error:#}"),
+            "turning the Assistant's web search off failed; the Assistant stays unset"
+        );
+    }
     let http = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
         .build()?;
@@ -129,7 +193,19 @@ pub async fn run() -> Result<()> {
             checkouts: checkouts.clone(),
             path: editor_path,
         },
-        ComputerBridge { token, hub },
+        ComputerBridge {
+            token: token.clone(),
+            hub,
+        },
+        Assistant {
+            model: ComputerModel {
+                http: http.clone(),
+                endpoint: args.model_endpoint.clone(),
+                key: args.model_key.clone(),
+                token,
+            },
+            sandboxes,
+        },
     );
     let writing = tokio::spawn(write_back(
         checkouts,
@@ -156,6 +232,15 @@ pub async fn run() -> Result<()> {
     served
 }
 
+/// Turn the Assistant's web search off in n8n's settings, signed in as the owner.
+async fn disable_assistant_search(password: &SecretString) -> Result<()> {
+    let n8n = N8nClient::new(N8nSettings::base_url())?;
+    let session = n8n.login(OWNER_EMAIL, password).await?;
+    n8n.disable_assistant_search(&session).await?;
+    tracing::info!("turned the Assistant's web search off in n8n's settings");
+    Ok(())
+}
+
 /// Write back every team's saved workflows every `interval`.
 async fn write_back(checkouts: Arc<Checkouts>, interval: Duration) {
     let mut ticks = tokio::time::interval(interval);
@@ -180,5 +265,49 @@ async fn terminated() {
     tokio::select! {
         _ = term.recv() => {}
         _ = tokio::signal::ctrl_c() => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+
+    use super::*;
+
+    #[test]
+    fn n8n_s_assistant_uses_the_program_s_model_and_sandboxes() {
+        let token = SecretString::from("start-token");
+        let environment: BTreeMap<_, _> = assistant_environment(
+            5680,
+            &token,
+            "XiaomiMiMo/MiMo-V2.6-Pro",
+            Path::new("/sandbox/n8n/.sandboxes"),
+        )
+        .into_iter()
+        .collect();
+        let expected = BTreeMap::from([
+            ("N8N_INSTANCE_AI_MODEL", "custom/XiaomiMiMo/MiMo-V2.6-Pro"),
+            (
+                "N8N_INSTANCE_AI_MODEL_URL",
+                "http://127.0.0.1:5680/v1/openai",
+            ),
+            ("N8N_INSTANCE_AI_MODEL_API_KEY", "start-token"),
+            ("N8N_INSTANCE_AI_BROWSER_USE_ENABLED", "false"),
+            ("N8N_INSTANCE_AI_SANDBOX_ENABLED", "true"),
+            ("N8N_INSTANCE_AI_SANDBOX_PROVIDER", "n8n-sandbox"),
+            ("N8N_SANDBOX_SERVICE_URL", "http://127.0.0.1:5680/n8n"),
+            ("N8N_SANDBOX_SERVICE_API_KEY", "start-token"),
+            ("N8N_SANDBOX_SERVICE_HOMES", "/sandbox/n8n/.sandboxes"),
+        ]);
+        assert_eq!(
+            environment
+                .iter()
+                .map(|(name, value)| (*name, value.as_str()))
+                .collect::<BTreeMap<_, _>>(),
+            expected
+        );
+        // The model's credential stays with the program.
+        assert!(!environment.contains_key("DEEPINFRA_API_KEY"));
+        assert!(WITHHELD.contains(&"DEEPINFRA_API_KEY"));
     }
 }

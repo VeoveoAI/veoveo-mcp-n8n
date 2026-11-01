@@ -2,7 +2,9 @@
 //! Computer's base path: `open`, which clones a team on demand, applies it and opens a
 //! workflow; `teams`, the teams the person reaches; and everything else, n8n's editor,
 //! forwarded to n8n's listener without the mount as the owner, whose session the program
-//! holds. The Hub already strips the browser's cookies and credentials both ways.
+//! holds. The Hub already strips the browser's cookies and credentials both ways. Beside
+//! the mount, only n8n reaches the program: its bridge, its Assistant's model endpoint and
+//! its Assistant's sandbox service, each admitting the token of this start.
 use std::sync::Arc;
 
 use axum::{
@@ -22,6 +24,8 @@ use super::{
     MOUNT,
     bridge::{self, ComputerBridge},
     hub,
+    model::{self, ComputerModel, MODEL_PATH},
+    sandboxes::ComputerSandboxes,
     session::{EditorSession, renewed_session, with_session},
     teams::Checkouts,
 };
@@ -39,9 +43,17 @@ pub struct Editor {
     pub path: String,
 }
 
+/// n8n's Assistant: its model endpoint and its sandbox service.
+#[derive(Clone)]
+pub struct Assistant {
+    pub model: ComputerModel,
+    pub sandboxes: ComputerSandboxes,
+}
+
 /// The program's routes on its loopback port.
-pub fn router(editor: Editor, bridge: ComputerBridge) -> Router {
+pub fn router(editor: Editor, bridge: ComputerBridge, assistant: Assistant) -> Router {
     let mount = MOUNT.trim_end_matches('/');
+    let own = format!("/{}", crate::server().as_str());
     Router::new()
         .route(&format!("{mount}/open"), get(open))
         .route(&format!("{mount}/teams"), get(teams))
@@ -49,9 +61,11 @@ pub fn router(editor: Editor, bridge: ComputerBridge) -> Router {
         .route(&format!("{mount}/{{*rest}}"), any(forward))
         .with_state(editor)
         .route(
-            &format!("/{}/bridge/calls", crate::server().as_str()),
+            &format!("{own}/bridge/calls"),
             post(bridge::call).with_state(bridge),
         )
+        .route(MODEL_PATH, post(model::chat).with_state(assistant.model))
+        .merge(assistant.sandboxes.routes(&own))
 }
 
 #[derive(Deserialize)]

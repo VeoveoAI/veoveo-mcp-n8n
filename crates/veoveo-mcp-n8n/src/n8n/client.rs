@@ -326,6 +326,26 @@ impl N8nClient {
         Ok(revoked)
     }
 
+    /// Turn the Assistant's web search off in n8n's settings, as the owner: a person's own
+    /// n8n has no search provider, and the Assistant counts as set up once search is either
+    /// connected or off.
+    pub async fn disable_assistant_search(&self, session: &OwnerSession) -> Result<(), N8nError> {
+        let path = "rest/instance-ai/settings";
+        let response = self
+            .http
+            .put(self.url(path))
+            .header(header::CONTENT_TYPE, "application/json")
+            .header(
+                header::COOKIE,
+                format!("{SESSION_COOKIE}={}", session.0.expose_secret()),
+            )
+            .body(serde_json::json!({"searchDisabled": true}).to_string())
+            .send()
+            .await?;
+        refuse_failure(Method::PUT, path, response).await?;
+        Ok(())
+    }
+
     /// Whether n8n accepts the client's API key: `false` when it answers 401.
     pub async fn accepts_api_key(&self) -> Result<bool, N8nError> {
         let path = "api/v1/workflows?limit=1&excludePinnedData=true";

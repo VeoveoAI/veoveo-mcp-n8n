@@ -110,13 +110,15 @@ RUN --mount=type=cache,id=veoveo-mcp-n8n-cargo-registry,target=/usr/local/cargo/
     cargo build --locked --release --bin veoveo-n8n-computer \
     && cp target/release/veoveo-n8n-computer /home/sandbox/veoveo-n8n-computer
 
-# What a person's Computer adds for n8n: Node.js and n8n as the fork's image lays them out,
-# the Veoveo nodes and veoveo-n8n-computer. An installation copies these paths into its
-# Computer image, a Debian trixie image as the fork's and the build's are, so node, n8n's
-# native modules and the binary find the same C library and libstdc++ there; n8n's
-# native modules also need librdkafka1, which the Computer image installs.
+# What a person's Computer adds for n8n: Node.js, npm and n8n as the fork's image lays them
+# out, the Veoveo nodes and veoveo-n8n-computer. npm installs the Assistant's workspace
+# packages in its sandboxes. An installation copies these paths into its Computer image,
+# a Debian trixie image as the fork's and the build's are, so node, n8n's native modules
+# and the binary find the same C library and libstdc++ there; n8n's native modules also
+# need librdkafka1, which the Computer image installs.
 FROM scratch AS computer
 COPY --from=n8n /usr/local/bin/node /usr/local/bin/node
+COPY --from=n8n /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/npm
 COPY --from=n8n /usr/local/lib/node_modules/n8n /usr/local/lib/node_modules/n8n
 COPY --chmod=0755 --from=computer-build /home/sandbox/veoveo-n8n-computer /usr/local/bin/veoveo-n8n-computer
 COPY nodes /opt/veoveo/n8n/nodes
