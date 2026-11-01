@@ -3,10 +3,11 @@
 # Node.js with n8n from the VeoveoAI fork, which the server runs as its child. Both are
 # Debian trixie (glibc), as the installation's Lore CLI that every start runs is.
 #
-# n8n comes from the fork's image in the installation's registry: commit 9ebc1efe of
-# VeoveoAI/n8n (n8n 2.46.0 and the schema check before CREATE SCHEMA), built on
-# node:26.12.1-trixie-slim. Only the factory's BuildKit reaches that registry.
-FROM registry.veoveo-system.svc.cluster.local:5000/veoveo/n8n@sha256:f57e556a3b7b90911c8788815bb9adbbf48c74da4463dbc3ed6176d7fb28d939 AS n8n
+# n8n comes from the fork's image in the installation's registry: commit f9e93490 of
+# VeoveoAI/n8n (n8n 2.46.0, the schema check before CREATE SCHEMA and
+# N8N_SANDBOX_SERVICE_HOMES, a home for each sandbox), built on node:26.12.1-trixie-slim.
+# Only the factory's BuildKit reaches that registry.
+FROM registry.veoveo-system.svc.cluster.local:5000/veoveo/n8n@sha256:ed414042dc8405ba1c0fc7d2afa996ae9a3203a3fa24873bdd67e08697de941e AS n8n
 
 FROM rust:1.99.0-trixie@sha256:6ff07edce8775d0f64be7aba9197229407301bddf2054d62c27b541a6238a181
 USER root

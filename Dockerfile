@@ -4,11 +4,12 @@
 # deployable image.
 
 ARG COMPONENT=veoveo-mcp-n8n
-# n8n from the VeoveoAI fork, commit 9ebc1efe (n8n 2.46.0 and the schema check before
-# CREATE SCHEMA), built on node:26.12.1-trixie-slim, by digest. The default names the
+# n8n from the VeoveoAI fork, commit f9e93490 (n8n 2.46.0, the schema check before
+# CREATE SCHEMA and N8N_SANDBOX_SERVICE_HOMES, a home for each sandbox), built on
+# node:26.12.1-trixie-slim, by digest. The default names the
 # installation's registry; a host that reaches it under another address passes the same
 # digest there.
-ARG N8N_IMAGE=registry.veoveo-system.svc.cluster.local:5000/veoveo/n8n@sha256:f57e556a3b7b90911c8788815bb9adbbf48c74da4463dbc3ed6176d7fb28d939
+ARG N8N_IMAGE=registry.veoveo-system.svc.cluster.local:5000/veoveo/n8n@sha256:ed414042dc8405ba1c0fc7d2afa996ae9a3203a3fa24873bdd67e08697de941e
 
 FROM ${N8N_IMAGE} AS n8n
 
