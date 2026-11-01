@@ -1,5 +1,6 @@
-//! Forwarding a request the Hub delivered to the hooks to n8n's listener on loopback,
-//! streaming n8n's answer.
+//! Forwarding a request to n8n's listener on loopback, streaming n8n's answer: the hooks'
+//! deliveries, and the editor requests of a person's own Computer, whose bodies stream
+//! too.
 use axum::{
     body::Body,
     http::{HeaderMap, HeaderName, Method, Response, StatusCode, header},
@@ -81,6 +82,11 @@ pub async fn forward(
     *forwarded.status_mut() = status;
     *forwarded.headers_mut() = headers;
     forwarded
+}
+
+/// A request body as it streams to n8n.
+pub fn streamed(body: Body) -> reqwest::Body {
+    reqwest::Body::wrap_stream(body.into_data_stream())
 }
 
 /// The URL on n8n's listener of `path` and `query`, relative to its root.

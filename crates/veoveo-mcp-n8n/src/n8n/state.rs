@@ -111,6 +111,18 @@ impl StateDirectory {
     pub fn write_private(&self, name: &str, contents: &str) -> io::Result<()> {
         write_private_at(&self.root, name, contents)
     }
+
+    /// The secret kept in `name`, generated and kept with mode 0600 the first time.
+    pub fn kept_secret(&self, name: &str) -> io::Result<SecretString> {
+        match read_optional(&self.root.join(name))? {
+            Some(secret) if !secret.is_empty() => Ok(SecretString::from(secret)),
+            _ => {
+                let secret = generate_secret()?;
+                self.write_private(name, secret.expose_secret())?;
+                Ok(secret)
+            }
+        }
+    }
 }
 
 /// Write `contents` to `name` in `folder` with mode 0600, through a temporary file that

@@ -6,6 +6,7 @@ mod credentials;
 mod environment;
 mod executions;
 mod state;
+mod tags;
 
 use std::{process::ExitStatus, time::Duration};
 
@@ -14,17 +15,19 @@ use secrecy::SecretString;
 use tokio::process::Child;
 
 pub use client::{
-    API_KEY_LABEL, API_KEY_SCOPES, N8nClient, N8nError, N8nWorkflow, N8nWorkflowId, OwnerSession,
+    API_KEY_LABEL, API_KEY_SCOPES, COMPUTER_API_KEY_SCOPES, N8nClient, N8nError, N8nWorkflow,
+    N8nWorkflowId, OwnerSession, SESSION_COOKIE_NAME,
 };
 pub use credentials::import_document;
 pub use environment::{
-    DatabaseTls, LISTEN_ADDRESS, N8nDatabase, N8nSecrets, N8nSettings, OWNER_EMAIL, PORT,
-    TABLE_PREFIX, WITHHELD_PREFIXES,
+    DatabaseTls, LISTEN_ADDRESS, N8nDatabase, N8nEditor, N8nSecrets, N8nSettings, N8nStorage,
+    OWNER_EMAIL, PORT, TABLE_PREFIX, WITHHELD_PREFIXES,
 };
 pub use executions::{
     DISPATCH_HEADER, ExecutionsPage, N8nExecution, VEOVEO_RESULT, VEOVEO_TOOL, VEOVEO_TRIGGER,
 };
 pub use state::{StateDirectory, generate_secret};
+pub use tags::{N8nTag, TaggedWorkflow};
 
 use crate::instance::CredentialMapping;
 
@@ -86,7 +89,7 @@ impl N8n {
         tracing::info!(pid = child.id(), "n8n started");
         let client = N8nClient::new(N8nSettings::base_url())?;
         wait_ready(&mut child, &client).await?;
-        let client = api_client(&client, state, password).await?;
+        let client = api_client(&client, state, password, settings.api_key_scopes).await?;
         let version = match version.await {
             Ok(Ok(Ok(output))) if output.status.success() => reported_version(&output.stdout),
             _ => None,
@@ -191,6 +194,7 @@ async fn api_client(
     client: &N8nClient,
     state: &StateDirectory,
     password: &SecretString,
+    scopes: &[&str],
 ) -> Result<N8nClient> {
     if let Some(key) = state.api_key().context("reading the kept API key")? {
         let kept = client.with_api_key(key);
@@ -214,7 +218,7 @@ async fn api_client(
         );
     }
     let key = client
-        .mint_api_key(&session)
+        .mint_api_key(&session, scopes)
         .await
         .context("minting the server's API key")?;
     state.keep_api_key(&key).context("keeping the API key")?;

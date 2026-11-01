@@ -71,6 +71,25 @@ pub fn plan(
     recorded: &BTreeMap<WorkflowName, Recorded>,
     current: &BTreeMap<WorkflowName, Option<N8nWorkflow>>,
 ) -> Vec<Decision> {
+    plan_for(files, recorded, current, Activation::Publish)
+}
+
+/// Whether an apply publishes what it applies: a runner's n8n runs its team's
+/// workflows; a person's own n8n holds a team's as drafts, so its triggers never run a
+/// second time beside the runner's.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Activation {
+    Publish,
+    Draft,
+}
+
+/// [`plan`] for `activation`: a draft is never published, so an unchanged one is kept.
+pub fn plan_for(
+    files: &[(WorkflowName, FileDigest)],
+    recorded: &BTreeMap<WorkflowName, Recorded>,
+    current: &BTreeMap<WorkflowName, Option<N8nWorkflow>>,
+    activation: Activation,
+) -> Vec<Decision> {
     let in_n8n = |workflow: &WorkflowName| current.get(workflow).and_then(Option::as_ref);
     let mut decisions: Vec<Decision> = files
         .iter()
@@ -88,7 +107,7 @@ pub fn plan(
                     replaced: edited.filter(|_| !found.is_archived),
                     unarchive: found.is_archived,
                 }
-            } else if found.is_active() {
+            } else if found.is_active() || activation == Activation::Draft {
                 Decision::Keep { workflow, n8n_id }
             } else {
                 Decision::Publish { workflow, n8n_id }
@@ -115,6 +134,33 @@ pub fn plan(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_draft_is_kept_unpublished() {
+        let recorded = BTreeMap::from([(name("hello"), recorded("a1b2c3d4e5f6g7h8", 1, V1))]);
+        let draft = BTreeMap::from([(name("hello"), found("a1b2c3d4e5f6g7h8", V1, false, false))]);
+        assert_eq!(
+            plan_for(
+                &[(name("hello"), digest(1))],
+                &recorded,
+                &draft,
+                Activation::Draft
+            ),
+            [Decision::Keep {
+                workflow: name("hello"),
+                n8n_id: id("a1b2c3d4e5f6g7h8")
+            }]
+        );
+        assert!(matches!(
+            plan_for(
+                &[(name("hello"), digest(1))],
+                &recorded,
+                &draft,
+                Activation::Publish
+            )[0],
+            Decision::Publish { .. }
+        ));
+    }
 
     const V1: uuid::Uuid = uuid::Uuid::from_u128(1);
     const V2: uuid::Uuid = uuid::Uuid::from_u128(2);

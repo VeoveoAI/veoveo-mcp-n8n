@@ -28,6 +28,21 @@ pub const API_KEY_SCOPES: &[&str] = &[
     "execution:stop",
 ];
 
+/// The scopes of the API key `veoveo-n8n-computer` mints in a person's own n8n: workflows
+/// and tags, by which it keeps each team's workflows together.
+pub const COMPUTER_API_KEY_SCOPES: &[&str] = &[
+    "workflow:create",
+    "workflow:read",
+    "workflow:update",
+    "workflow:delete",
+    "workflow:list",
+    "tag:create",
+    "tag:read",
+    "tag:list",
+    "workflowTags:update",
+    "workflowTags:list",
+];
+
 /// A failed exchange with n8n.
 #[derive(Debug, thiserror::Error)]
 pub enum N8nError {
@@ -107,9 +122,37 @@ impl N8nWorkflow {
     }
 }
 
-/// The owner's n8n session, its `n8n-auth` cookie's value, with which the server mints
-/// its API key.
+/// The owner's n8n session: its `n8n-auth` cookie's value, a JWT, with which a program
+/// mints its API key, and which a person's own Computer attaches to each editor request.
 pub struct OwnerSession(SecretString);
+
+impl OwnerSession {
+    /// A session from an `n8n-auth` cookie's value.
+    pub fn from_cookie(value: impl Into<String>) -> Self {
+        Self(SecretString::from(value.into()))
+    }
+
+    /// The `n8n-auth` cookie's value.
+    pub fn cookie(&self) -> &SecretString {
+        &self.0
+    }
+
+    /// When the session expires, in seconds since the Unix epoch: its JWT's `exp`.
+    pub fn expires_at(&self) -> Option<u64> {
+        use base64::Engine;
+        let payload = self.0.expose_secret().split('.').nth(1)?;
+        let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .decode(payload.trim_end_matches('='))
+            .ok()?;
+        serde_json::from_slice::<serde_json::Value>(&bytes)
+            .ok()?
+            .get("exp")?
+            .as_u64()
+    }
+}
+
+/// The name of n8n's session cookie.
+pub const SESSION_COOKIE_NAME: &str = SESSION_COOKIE;
 
 #[derive(Deserialize)]
 struct Data<T> {
@@ -213,11 +256,15 @@ impl N8nClient {
     }
 
     /// Mint an API key with the server's scopes, without an expiry, for `session`.
-    pub async fn mint_api_key(&self, session: &OwnerSession) -> Result<SecretString, N8nError> {
+    pub async fn mint_api_key(
+        &self,
+        session: &OwnerSession,
+        scopes: &[&str],
+    ) -> Result<SecretString, N8nError> {
         let path = "rest/api-keys";
         let body = serde_json::json!({
             "label": API_KEY_LABEL,
-            "scopes": API_KEY_SCOPES,
+            "scopes": scopes,
             "expiresAt": null,
         });
         let response = self

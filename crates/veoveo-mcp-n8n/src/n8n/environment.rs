@@ -90,6 +90,27 @@ impl N8nDatabase {
     }
 }
 
+/// Where n8n keeps its state.
+pub enum N8nStorage {
+    /// The installation's PostgreSQL as the server's login, in the server's schema, with
+    /// every connection taking the server's group role: a runner's n8n.
+    Postgres {
+        database: N8nDatabase,
+        schema: String,
+        group_role: String,
+    },
+    /// SQLite in n8n's user folder: a person's own n8n in their Computer.
+    Sqlite,
+}
+
+/// n8n's editor, which a person's Computer serves under a path of its own.
+pub struct N8nEditor {
+    /// `N8N_PATH`: the path the browser reaches the editor under, ending in `/`.
+    pub path: String,
+    /// `N8N_EDITOR_BASE_URL`: the editor's public URL.
+    pub base_url: Url,
+}
+
 /// Everything n8n's environment is built from.
 pub struct N8nSettings {
     /// n8n's command line program, `n8n` on `PATH` in the factory image.
@@ -98,16 +119,23 @@ pub struct N8nSettings {
     pub user_folder: PathBuf,
     /// The one folder workflows may read and write files in.
     pub files: PathBuf,
-    pub database: N8nDatabase,
-    /// The server's schema and its group role, which n8n's connections take.
-    pub schema: String,
-    pub group_role: String,
+    pub storage: N8nStorage,
     /// `N8N_WEBHOOK_URL`: the public URL of the server's hooks.
     pub webhook_url: Url,
-    /// The node types the instance admits.
-    pub nodes: Vec<NodeType>,
+    /// The node types n8n loads beside the Veoveo nodes; none loads every node type but
+    /// the excluded ones, as a person's own n8n does.
+    pub nodes: Option<Vec<NodeType>>,
     /// The Veoveo nodes' folder, `N8N_CUSTOM_EXTENSIONS`.
     pub veoveo_nodes: PathBuf,
+    /// The editor, which only a person's own n8n serves; a runner's serves none.
+    pub editor: Option<N8nEditor>,
+    /// The scopes of the API key the program mints in n8n.
+    pub api_key_scopes: &'static [&'static str],
+    /// Further variables of n8n's environment, such as the Computer's bridge.
+    pub extra: Vec<(&'static str, String)>,
+    /// Inherited variables n8n's process never receives beside the withheld prefixes,
+    /// such as a Computer's credential placeholders.
+    pub withheld: &'static [&'static str],
 }
 
 /// The secrets the environment carries, kept under the state directory.
@@ -142,7 +170,6 @@ impl N8nSettings {
     /// n8n's environment. The values that are secrets are the database password, the
     /// encryption key and the owner's password hash.
     pub fn environment(&self, secrets: &N8nSecrets) -> Vec<(&'static str, String)> {
-        let database = &self.database;
         let mut environment = vec![
             // n8n runs as in production wherever it runs: without NODE_ENV it takes itself
             // for a development build and drops its own security headers.
@@ -158,20 +185,6 @@ impl N8nSettings {
                 "N8N_INSTANCE_OWNER_PASSWORD_HASH",
                 secrets.owner_password_hash.expose_secret().to_owned(),
             ),
-            ("DB_TYPE", "postgresdb".to_owned()),
-            ("DB_POSTGRESDB_HOST", database.host.clone()),
-            ("DB_POSTGRESDB_PORT", database.port.to_string()),
-            ("DB_POSTGRESDB_DATABASE", database.database.clone()),
-            ("DB_POSTGRESDB_USER", database.user.clone()),
-            (
-                "DB_POSTGRESDB_PASSWORD",
-                database.password.expose_secret().to_owned(),
-            ),
-            ("DB_POSTGRESDB_SCHEMA", self.schema.clone()),
-            ("DB_TABLE_PREFIX", TABLE_PREFIX.to_owned()),
-            // n8n's PostgreSQL client reads PGOPTIONS, so every connection takes the
-            // server's group role and n8n's tables belong to it.
-            ("PGOPTIONS", format!("-c role={}", self.group_role)),
             (
                 "N8N_ENCRYPTION_KEY",
                 secrets.encryption_key.expose_secret().to_owned(),
@@ -181,15 +194,6 @@ impl N8nSettings {
             (
                 "N8N_RESTRICT_FILE_ACCESS_TO",
                 self.files.display().to_string(),
-            ),
-            (
-                "NODES_INCLUDE",
-                json_list(
-                    self.nodes
-                        .iter()
-                        .map(NodeType::as_str)
-                        .chain(VEOVEO_NODES.iter().copied()),
-                ),
             ),
             (
                 "N8N_CUSTOM_EXTENSIONS",
@@ -203,17 +207,65 @@ impl N8nSettings {
             ("N8N_VERSION_NOTIFICATIONS_ENABLED", "false".to_owned()),
             ("N8N_TEMPLATES_ENABLED", "false".to_owned()),
         ];
-        match &database.tls {
-            DatabaseTls::Disabled => {
-                environment.push(("DB_POSTGRESDB_SSL_ENABLED", "false".to_owned()));
-            }
-            DatabaseTls::Verified { roots } => {
-                environment.push(("DB_POSTGRESDB_SSL_ENABLED", "true".to_owned()));
-                // n8n reads a variable's value from the file its `_FILE` form names.
-                environment.push(("DB_POSTGRESDB_SSL_CA_FILE", roots.display().to_string()));
-                environment.push(("DB_POSTGRESDB_SSL_REJECT_UNAUTHORIZED", "true".to_owned()));
-            }
+        if let Some(nodes) = &self.nodes {
+            environment.push((
+                "NODES_INCLUDE",
+                json_list(
+                    nodes
+                        .iter()
+                        .map(NodeType::as_str)
+                        .chain(VEOVEO_NODES.iter().copied()),
+                ),
+            ));
         }
+        match &self.storage {
+            N8nStorage::Postgres {
+                database,
+                schema,
+                group_role,
+            } => {
+                environment.extend([
+                    ("DB_TYPE", "postgresdb".to_owned()),
+                    ("DB_POSTGRESDB_HOST", database.host.clone()),
+                    ("DB_POSTGRESDB_PORT", database.port.to_string()),
+                    ("DB_POSTGRESDB_DATABASE", database.database.clone()),
+                    ("DB_POSTGRESDB_USER", database.user.clone()),
+                    (
+                        "DB_POSTGRESDB_PASSWORD",
+                        database.password.expose_secret().to_owned(),
+                    ),
+                    ("DB_POSTGRESDB_SCHEMA", schema.clone()),
+                    ("DB_TABLE_PREFIX", TABLE_PREFIX.to_owned()),
+                    // n8n's PostgreSQL client reads PGOPTIONS, so every connection takes
+                    // the server's group role and n8n's tables belong to it.
+                    ("PGOPTIONS", format!("-c role={group_role}")),
+                ]);
+                match &database.tls {
+                    DatabaseTls::Disabled => {
+                        environment.push(("DB_POSTGRESDB_SSL_ENABLED", "false".to_owned()));
+                    }
+                    DatabaseTls::Verified { roots } => {
+                        environment.push(("DB_POSTGRESDB_SSL_ENABLED", "true".to_owned()));
+                        // n8n reads a variable's value from the file its `_FILE` form names.
+                        environment
+                            .push(("DB_POSTGRESDB_SSL_CA_FILE", roots.display().to_string()));
+                        environment
+                            .push(("DB_POSTGRESDB_SSL_REJECT_UNAUTHORIZED", "true".to_owned()));
+                    }
+                }
+            }
+            N8nStorage::Sqlite => environment.push(("DB_TYPE", "sqlite".to_owned())),
+        }
+        if let Some(editor) = &self.editor {
+            environment.extend([
+                ("N8N_PATH", editor.path.clone()),
+                ("N8N_EDITOR_BASE_URL", editor.base_url.to_string()),
+                // The editor's push channel is server-sent events, which pass through
+                // every proxy between it and the browser as plain responses.
+                ("N8N_PUSH_BACKEND", "sse".to_owned()),
+            ]);
+        }
+        environment.extend(self.extra.iter().cloned());
         environment
     }
 
@@ -232,6 +284,9 @@ impl N8nSettings {
             }
         }
         command.env_remove("WEBHOOK_URL").env_remove("PGOPTIONS");
+        for name in self.withheld {
+            command.env_remove(name);
+        }
         command.envs(self.environment(secrets));
         command
     }
@@ -257,18 +312,24 @@ mod tests {
             program: "n8n".into(),
             user_folder: "/sandbox/state/n8n/home".into(),
             files: "/sandbox/n8n-files".into(),
-            database,
-            schema: "n8n".to_owned(),
-            group_role: "server_n8n".to_owned(),
+            storage: N8nStorage::Postgres {
+                database,
+                schema: "n8n".to_owned(),
+                group_role: "server_n8n".to_owned(),
+            },
             webhook_url: Url::parse(
                 "https://veoveo.example/instances/019a5b30-0000-7000-8000-000000000001/n8n/hooks/",
             )
             .unwrap(),
-            nodes: vec![
+            nodes: Some(vec![
                 NodeType::parse("n8n-nodes-base.webhook").unwrap(),
                 NodeType::parse("n8n-nodes-base.set").unwrap(),
-            ],
+            ]),
             veoveo_nodes: "/sandbox/src/nodes/n8n-nodes-veoveo".into(),
+            editor: None,
+            api_key_scopes: crate::n8n::API_KEY_SCOPES,
+            extra: Vec::new(),
+            withheld: &[],
         })
     }
 
@@ -355,6 +416,42 @@ mod tests {
         assert!(!environment.contains_key("N8N_PATH"));
         assert!(!environment.contains_key("N8N_EDITOR_BASE_URL"));
         assert!(!environment.contains_key("WEBHOOK_URL"));
+    }
+
+    #[test]
+    fn a_persons_own_n8n_keeps_sqlite_and_serves_its_editor_under_its_path() {
+        let mut settings = settings("postgres://host/veoveo?sslmode=disable", None).unwrap();
+        settings.storage = N8nStorage::Sqlite;
+        settings.nodes = None;
+        settings.editor = Some(N8nEditor {
+            path: "/computer/c/abc/apps/n8n/".to_owned(),
+            base_url: Url::parse("https://veoveo.example/computer/c/abc/apps/n8n/").unwrap(),
+        });
+        settings.extra = vec![(
+            "VEOVEO_BRIDGE_URL",
+            "http://127.0.0.1:5680/n8n/bridge/calls".to_owned(),
+        )];
+        let environment = environment(&settings);
+        assert_eq!(environment["DB_TYPE"], "sqlite");
+        assert_eq!(environment["N8N_PATH"], "/computer/c/abc/apps/n8n/");
+        assert_eq!(
+            environment["N8N_EDITOR_BASE_URL"],
+            "https://veoveo.example/computer/c/abc/apps/n8n/"
+        );
+        assert_eq!(environment["N8N_PUSH_BACKEND"], "sse");
+        assert_eq!(
+            environment["VEOVEO_BRIDGE_URL"],
+            "http://127.0.0.1:5680/n8n/bridge/calls"
+        );
+        // Every node type but the excluded ones, which n8n still refuses.
+        assert!(!environment.contains_key("NODES_INCLUDE"));
+        assert!(environment["NODES_EXCLUDE"].contains("n8n-nodes-base.executeCommand"));
+        for name in environment.keys() {
+            assert!(
+                !name.starts_with("DB_POSTGRESDB_") && *name != "PGOPTIONS",
+                "{name}"
+            );
+        }
     }
 
     #[test]

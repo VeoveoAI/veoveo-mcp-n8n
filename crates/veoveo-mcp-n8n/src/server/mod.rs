@@ -29,7 +29,10 @@ use crate::{
     instance::{Admitted, Instance},
     loopback,
     mcp::{self, N8nMcp, Served},
-    n8n::{N8n, N8nDatabase, N8nSettings, STOP_GRACE, StateDirectory, generate_secret},
+    n8n::{
+        API_KEY_SCOPES, N8n, N8nDatabase, N8nSettings, N8nStorage, STOP_GRACE, StateDirectory,
+        generate_secret,
+    },
     runs::{N8nTasks, Runner},
     store::{InstanceKeyStore, RunStore, WorkflowStore, stored_tenant},
     workflows::{self, WorkflowFile},
@@ -177,18 +180,24 @@ async fn serve(
         program: args.n8n_program.clone(),
         user_folder: state.user_folder(),
         files: args.n8n_files.clone(),
-        database: N8nDatabase::from_grant(
-            &Url::parse(grant.url.as_str()).context("the database URL")?,
-            grant.username.as_str(),
-            grant.password.clone(),
-            args.database_roots.as_deref(),
-        )?,
-        schema: schema.schema().to_owned(),
-        group_role: schema.group_role(),
+        storage: N8nStorage::Postgres {
+            database: N8nDatabase::from_grant(
+                &Url::parse(grant.url.as_str()).context("the database URL")?,
+                grant.username.as_str(),
+                grant.password.clone(),
+                args.database_roots.as_deref(),
+            )?,
+            schema: schema.schema().to_owned(),
+            group_role: schema.group_role(),
+        },
         webhook_url: hooks_url.clone(),
-        nodes: instance.nodes.clone(),
+        nodes: Some(instance.nodes.clone()),
         veoveo_nodes: std::fs::canonicalize(&args.n8n_nodes)
             .with_context(|| format!("finding the Veoveo nodes at {}", args.n8n_nodes.display()))?,
+        editor: None,
+        api_key_scopes: API_KEY_SCOPES,
+        extra: Vec::new(),
+        withheld: &[],
     };
     let tenant = stored_tenant(&instance.tenant)?;
     // n8n's key lives with n8n's data, which outlives the sandbox's disk; the owner's

@@ -31,7 +31,8 @@ use veoveo_mcp_n8n::{
     mcp::{AUTHORIZATION, N8nMcp, Served},
     migrator,
     n8n::{
-        N8n, N8nDatabase, N8nSettings, STOP_GRACE, StateDirectory, UNKNOWN_VERSION, generate_secret,
+        API_KEY_SCOPES, N8n, N8nDatabase, N8nSettings, N8nStorage, STOP_GRACE, StateDirectory,
+        UNKNOWN_VERSION, generate_secret,
     },
     runs::{N8nTasks, Runner},
     server,
@@ -125,24 +126,30 @@ async fn n8n_runs_on_the_servers_login_and_applies_workflows_by_file_name() {
                 .map_or_else(|| PathBuf::from("n8n"), PathBuf::from),
             user_folder: state.user_folder(),
             files: directory.path().join("n8n-files"),
-            database: N8nDatabase::from_grant(
-                config.url(),
-                config.username(),
-                config.password().clone(),
-                None,
-            )
-            .unwrap(),
-            schema: schema.schema().to_owned(),
-            group_role: schema.group_role(),
+            storage: N8nStorage::Postgres {
+                database: N8nDatabase::from_grant(
+                    config.url(),
+                    config.username(),
+                    config.password().clone(),
+                    None,
+                )
+                .unwrap(),
+                schema: schema.schema().to_owned(),
+                group_role: schema.group_role(),
+            },
             webhook_url: Url::parse(
                 "https://hub.veoveo.test/instances/019a5b30-0000-7000-8000-000000000001/n8n/hooks/",
             )
             .unwrap(),
-            nodes: instance.nodes.clone(),
+            nodes: Some(instance.nodes.clone()),
             veoveo_nodes: PathBuf::from(REPOSITORY)
                 .join("nodes/n8n-nodes-veoveo")
                 .canonicalize()
                 .unwrap(),
+            editor: None,
+            api_key_scopes: API_KEY_SCOPES,
+            extra: Vec::new(),
+            withheld: &[],
         };
 
         // n8n's key lives in the database with its data: a new n8n's is generated. A disk
