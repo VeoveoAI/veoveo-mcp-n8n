@@ -71,6 +71,10 @@ pub(super) struct Args {
         default_value = "/sandbox/link/n8n/instance.toml"
     )]
     pub instance: PathBuf,
+    /// The tracked branch of the runner's linked repository, by its Lore ID, which the Hub
+    /// gives a runner; `n8n://status` names it, so a person's Computer clones that branch.
+    #[arg(long, env = "VEOVEO_TRACKED_BRANCH")]
+    pub tracked_branch: Option<String>,
     /// The node and credential types any team may use, from this repository's checkout.
     #[arg(long, env = "VEOVEO_N8N_ADMITTED", default_value = "n8n/admitted.toml")]
     pub admitted: PathBuf,

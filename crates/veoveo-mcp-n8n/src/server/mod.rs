@@ -272,6 +272,7 @@ async fn serve(
         issuer,
         n8n_version: n8n.version().to_owned(),
         started_at,
+        tracked_branch: args.tracked_branch.clone(),
     };
     let client = n8n.client().clone();
     let ready_process = process.clone();

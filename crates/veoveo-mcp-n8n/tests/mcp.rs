@@ -48,6 +48,8 @@ use veoveo_types::PrincipalId;
 
 /// The team repository the runner serves, by its Lore ID.
 const REPOSITORY: &str = "0123456789abcdef0123456789abcdef";
+/// The branch of it the runner's link tracks, by its Lore ID.
+const TRACKED: &str = "fedcba9876543210fedcba9876543210";
 /// The n8n instance whose executions the server dispatched.
 const N8N_INSTANCE: uuid::Uuid = uuid::Uuid::from_u128(0x0190_f3a2_7b1c_7d2e_8f3a_4b5c_6d7e_8f91);
 
@@ -61,6 +63,7 @@ fn served(tenant: &str) -> Served {
         issuer: Url::parse(testing::TEST_ISSUER).unwrap(),
         n8n_version: "2.46.0".to_owned(),
         started_at: "2026-10-31T10:00:00Z".to_owned(),
+        tracked_branch: Some(TRACKED.to_owned()),
     }
 }
 
@@ -403,6 +406,7 @@ async fn workflows_and_status_read_with_their_permissions_for_one_tenant() {
                 "hooksUrl": "https://hub.veoveo.test/instances/019a5b30-0000-7000-8000-000000000001/n8n/hooks/",
                 "repository": REPOSITORY,
                 "writer": true,
+                "trackedBranch": TRACKED,
                 "editUrl": format!("https://hub.veoveo.test/computer/apps/n8n/open?repository={REPOSITORY}")
             })
         );
@@ -413,7 +417,9 @@ async fn workflows_and_status_read_with_their_permissions_for_one_tenant() {
         // A server that is no runner names no repository and no Computer to edit in.
         let status = read_json(&read(&full, "n8n://status").await);
         assert_eq!(status["writer"], false);
-        assert!(status.get("repository").is_none() && status.get("editUrl").is_none(), "{status}");
+        for runner in ["repository", "editUrl", "trackedBranch"] {
+            assert!(status.get(runner).is_none(), "{runner}: {status}");
+        }
 
         // `run` is a Task: a caller without Task support is told so.
         let run = full

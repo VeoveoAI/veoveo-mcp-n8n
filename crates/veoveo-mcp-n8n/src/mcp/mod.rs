@@ -48,6 +48,9 @@ pub struct Served {
     pub n8n_version: String,
     /// When the server applied its workflows, RFC 3339.
     pub started_at: String,
+    /// The tracked branch of the runner's linked repository, by its Lore ID, as the Hub
+    /// names it in the runner's environment.
+    pub tracked_branch: Option<String>,
 }
 
 #[derive(Clone)]

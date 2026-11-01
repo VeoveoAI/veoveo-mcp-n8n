@@ -146,6 +146,10 @@ pub struct StatusView {
     /// Whether the caller's grant on that repository writes, which shows them the data of
     /// executions no run of theirs started.
     pub writer: bool,
+    /// The branch of the linked repository the runner serves, by its Lore ID, where a
+    /// change to its workflows is pushed; none for a server that is no runner.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tracked_branch: Option<String>,
     /// Where the caller edits one of these workflows in their own Computer:
     /// `{issuer}/computer/apps/n8n/open?repository=…`, to which a view adds
     /// `&workflow={file}`; none for a server that is no runner.

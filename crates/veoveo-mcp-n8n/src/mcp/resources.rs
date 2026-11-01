@@ -155,6 +155,9 @@ async fn read_status(
         workflows,
         hooks_url: domain.served.hooks_url.to_string(),
         writer: N8nMcp::writer(&identity),
+        tracked_branch: repository
+            .as_ref()
+            .and(domain.served.tracked_branch.clone()),
         repository,
         edit_url,
     })

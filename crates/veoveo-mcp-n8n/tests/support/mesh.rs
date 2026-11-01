@@ -234,6 +234,7 @@ pub async fn harness(granted: &[&str]) -> Harness {
         issuer: Url::parse(testing::TEST_ISSUER).unwrap(),
         n8n_version: "2.46.0".to_owned(),
         started_at: "2026-10-31T10:00:00Z".to_owned(),
+        tracked_branch: None,
     };
     let app = AppHtml::load(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/overview.html").as_ref())
         .unwrap();
