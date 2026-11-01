@@ -110,18 +110,38 @@ RUN --mount=type=cache,id=veoveo-mcp-n8n-cargo-registry,target=/usr/local/cargo/
     cargo build --locked --release --bin veoveo-n8n-computer \
     && cp target/release/veoveo-n8n-computer /home/sandbox/veoveo-n8n-computer
 
-# What a person's Computer adds for n8n: Node.js, npm and n8n as the fork's image lays them
-# out, the Veoveo nodes and veoveo-n8n-computer. npm installs the Assistant's workspace
-# packages in its sandboxes. An installation copies these paths into its Computer image,
-# a Debian trixie image as the fork's and the build's are, so node, n8n's native modules
-# and the binary find the same C library and libstdc++ there; n8n's native modules also
-# need librdkafka1, which the Computer image installs.
-FROM scratch AS computer
-COPY --from=n8n /usr/local/bin/node /usr/local/bin/node
-COPY --from=n8n /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/npm
-COPY --from=n8n /usr/local/lib/node_modules/n8n /usr/local/lib/node_modules/n8n
-COPY --chmod=0755 --from=computer-build /home/sandbox/veoveo-n8n-computer /usr/local/bin/veoveo-n8n-computer
+# What a person's Computer runs for n8n, as its user, uid 10001, reads it: every file
+# readable and every directory traversable by everyone, root owning them, whatever modes
+# the build context and the fork's image give them. The check runs as that user: it
+# reads every tree, lists the Veoveo nodes and runs Node.js, npm, n8n and the program.
+FROM n8n AS computer-files
+USER root
+COPY --from=computer-build /home/sandbox/veoveo-n8n-computer /usr/local/bin/veoveo-n8n-computer
 COPY nodes /opt/veoveo/n8n/nodes
+RUN chmod -R a+rX /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/n8n /opt/veoveo/n8n \
+    && chmod 0755 /usr/local/bin/node /usr/local/bin/veoveo-n8n-computer
+USER 10001
+RUN set -e; scratch="$(mktemp -d)"; export HOME="$scratch"; \
+    unreadable="$(find /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/n8n /opt/veoveo/n8n \
+        \( -type d \( ! -readable -o ! -executable \) \) -o \( -type f ! -readable \) 2>&1 | head -5)"; \
+    if [ -n "$unreadable" ]; then echo "uid 10001 cannot read: $unreadable" >&2; exit 1; fi; \
+    ls /opt/veoveo/n8n/nodes/n8n-nodes-veoveo; \
+    node --version; npm --version; /usr/local/lib/node_modules/n8n/bin/n8n --version; \
+    veoveo-n8n-computer --help >/dev/null; \
+    rm -rf "$scratch"
+
+# What a person's Computer adds for n8n: Node.js, npm and n8n as the fork's image lays them
+# out, the Veoveo nodes and veoveo-n8n-computer, with the modes above. npm installs the
+# Assistant's workspace packages in its sandboxes. An installation copies these paths into
+# its Computer image, a Debian trixie image as the fork's and the build's are, so node,
+# n8n's native modules and the binary find the same C library and libstdc++ there; n8n's
+# native modules also need librdkafka1, which the Computer image installs.
+FROM scratch AS computer
+COPY --from=computer-files /usr/local/bin/node /usr/local/bin/node
+COPY --from=computer-files /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/npm
+COPY --from=computer-files /usr/local/lib/node_modules/n8n /usr/local/lib/node_modules/n8n
+COPY --from=computer-files /usr/local/bin/veoveo-n8n-computer /usr/local/bin/veoveo-n8n-computer
+COPY --from=computer-files /opt/veoveo/n8n /opt/veoveo/n8n
 
 # The runtime is the fork's n8n image with the server beside it: the server starts n8n as
 # its child. Both are Debian trixie builds, so the binary's glibc is the image's.

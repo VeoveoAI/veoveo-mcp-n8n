@@ -518,7 +518,10 @@ credential rule names it.
   Computer adds for n8n: Node.js, npm and n8n from the fork's image at
   `/usr/local/bin/node`, `/usr/local/lib/node_modules/npm` and
   `/usr/local/lib/node_modules/n8n`, `veoveo-n8n-computer` at `/usr/local/bin`, built
-  as the server is, and the Veoveo nodes at `/opt/veoveo/n8n/nodes`. The installation
+  as the server is, and the Veoveo nodes at `/opt/veoveo/n8n/nodes`, every file readable
+  and every directory traversable by everyone, root owning them, whatever modes the build
+  context gives them; the build checks as the Computer's user, uid 10001, that it reads
+  every tree, lists the nodes and runs Node.js, npm, n8n and the program. The installation
   copies them into its Computer image, which starts from its factory image, a Debian
   trixie image as the fork's and the build's are, and adds `librdkafka1`, which n8n's
   native modules load; the factory base has no Node.js of its own. The Computer's start
