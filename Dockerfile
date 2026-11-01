@@ -121,6 +121,8 @@ COPY --from=computer-build /home/sandbox/veoveo-n8n-computer /usr/local/bin/veov
 COPY nodes /opt/veoveo/n8n/nodes
 RUN chmod -R a+rX /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/n8n /opt/veoveo/n8n \
     && chmod 0755 /usr/local/bin/node /usr/local/bin/veoveo-n8n-computer
+# The fork image's WORKDIR, /home/node, is closed to uid 10001; the check starts from /.
+WORKDIR /
 USER 10001
 RUN set -e; scratch="$(mktemp -d)"; export HOME="$scratch"; \
     unreadable="$(find /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/n8n /opt/veoveo/n8n \
