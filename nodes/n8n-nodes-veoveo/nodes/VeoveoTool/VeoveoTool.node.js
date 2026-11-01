@@ -1,7 +1,9 @@
 'use strict';
 // The Veoveo Tool calls a tool of another Veoveo server for the run's caller, through the
 // server's bridge on loopback, with the run's token. The bridge admits only the tools in
-// its table and only a running run's token; this node holds no other logic.
+// its table and only a running run's token; this node holds no other logic. In a person's
+// own Computer no run starts the workflow: veoveo-n8n-computer names its own bridge and
+// token in n8n's environment, and the call acts as the Computer's owner.
 
 function runOf(value) {
 	if (typeof value === 'string') {
@@ -12,6 +14,13 @@ function runOf(value) {
 		}
 	}
 	return value && typeof value === 'object' ? value : null;
+}
+
+// The Computer's bridge, when n8n runs in a person's own Computer.
+function computerRun() {
+	const bridgeUrl = process.env.VEOVEO_BRIDGE_URL;
+	const runToken = process.env.VEOVEO_BRIDGE_TOKEN;
+	return bridgeUrl && runToken ? { runToken, bridgeUrl } : null;
 }
 
 function objectOf(value) {
@@ -66,9 +75,17 @@ class VeoveoTool {
 		const items = this.getInputData();
 		const output = [];
 		for (let index = 0; index < items.length; index++) {
-			const run = runOf(this.getNodeParameter('run', index));
+			let run = null;
+			try {
+				run = runOf(this.getNodeParameter('run', index));
+			} catch {
+				// A workflow without a Veoveo Trigger names no run.
+			}
 			if (!run || !run.runToken || !run.bridgeUrl) {
-				throw new Error('The Veoveo Tool runs only in a run that a Veoveo Trigger started');
+				run = computerRun();
+			}
+			if (!run) {
+				throw new Error('The Veoveo Tool runs only in a run that a Veoveo Trigger started, or in your Computer');
 			}
 			const response = await this.helpers.httpRequest({
 				method: 'POST',

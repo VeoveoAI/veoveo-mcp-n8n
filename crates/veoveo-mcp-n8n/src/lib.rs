@@ -9,6 +9,8 @@ pub mod contract;
 #[cfg(feature = "server")]
 pub mod bridge;
 #[cfg(feature = "server")]
+pub mod computer;
+#[cfg(feature = "server")]
 pub mod hooks;
 #[cfg(feature = "server")]
 pub mod instance;

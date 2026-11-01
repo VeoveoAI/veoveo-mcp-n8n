@@ -23,7 +23,7 @@ repository made from the template does, and keeps the structure.
 
 ```text
 crate        veoveo-mcp-n8n
-binary       veoveo-mcp-n8n
+binary       veoveo-mcp-n8n, and veoveo-n8n-computer for a person's own Computer
 repository   veoveo-mcp-n8n
 slug         n8n
 URI scheme   n8n
@@ -127,7 +127,8 @@ the Hub gives that runner alone, and a runner serves one tenant, the one the tea
 | `bridge` | Calls from n8n's Veoveo Tool node into other servers |
 | `loopback` | The server's loopback listener, where the Veoveo Result posts a run's output and the Veoveo Tool calls the bridge |
 | `hooks` | Public webhook deliveries to n8n's webhook listener |
-| `proxy` | Forwarding a delivered request to n8n's listener, for the hooks |
+| `proxy` | Forwarding a request to n8n's listener, for the hooks and a Computer's editor |
+| `computer` | [`veoveo-n8n-computer`](#n8n-in-a-persons-computer): n8n in a person's own Computer, its editor, the teams' checkouts and its bridge |
 | `store` | The server's own tables in the `n8n` schema |
 | `server` | Configuration, registration with the Hub, the database login, the process instance and serving |
 
@@ -242,7 +243,8 @@ template.
 n8n's program gets the server's environment without the variables whose names start
 with `VEOVEO_`, `N8N_`, `DB_` or `NODES_`, nor `WEBHOOK_URL` or `PGOPTIONS`, and with the
 settings above. The server's own configuration and its registration secret stay with it,
-and only the server configures n8n. `N8N_PATH` is never set.
+and only the server configures n8n. A runner sets no `N8N_PATH`; only a person's own
+Computer serves the editor, under its path.
 
 ### The Instance
 
@@ -465,6 +467,57 @@ It reads again when the person asks, never on a timer, and polls only a Task it 
 A server that is no runner names no link: the overview reads `n8n://status` and calls
 `run`, and offers no Computer.
 
+## n8n In A Person's Computer
+
+`veoveo-n8n-computer` runs n8n in a person's own Computer, as a program of the Computer
+version that the Hub forwards `/computer/c/{computer}/apps/n8n/…` to on a loopback port,
+5680 by default. It is the one program of the Computer that calls the Hub for n8n: n8n's
+process receives none of the Computer's credential placeholders and no credential rule
+names it.
+
+- **n8n.** It starts n8n on loopback, as a runner does, with SQLite in n8n's user folder
+  under `$HOME/.veoveo/n8n`, every node type but the excluded ones, and the Veoveo nodes.
+  n8n's encryption key and its owner's password are generated once and kept there with
+  mode 0600; n8n creates the owner from the environment with the password's hash, and
+  the program mints its API key, with the workflow and tag scopes it uses, as the server
+  does. One person, one Computer: they are its owner.
+- **The editor.** The browser reaches the editor at `{base path}/apps/n8n/`, n8n's
+  `N8N_PATH` and, under the Hub's public origin, its `N8N_EDITOR_BASE_URL`. The program
+  forwards everything under `/apps/n8n/` to n8n's listener without the mount, streaming
+  both bodies, with the owner's n8n session, which it signs in for with the kept
+  password, renews from n8n's answers and signs in again an hour before it expires or
+  after n8n refused it. It sets the request's origin to n8n's own, as n8n's push channel
+  checks, sends server-sent events for the push channel, and strips n8n's cookies from
+  the answers; the Hub already strips the browser's cookies and credentials both ways.
+- **Teams.** It lists the teams the person reaches through the Hub's MCP endpoint of the
+  Computers profile as the owner, with the Computer's `COMPUTER_HUB_REFERENCE`
+  placeholder as its bearer: each `n8n://{link}/status` among the person's resources is
+  a team, which names its repository, its tracked branch and whether the person writes
+  it. `GET /apps/n8n/teams` shows them.
+- **Checkouts.** `GET /apps/n8n/open?repository=&workflow=` finds the team whose status
+  names the repository, clones it with the Computer's Lore at the tracked branch into
+  `$HOME/n8n/{team}` unless that checkout exists, writes back what was saved, applies
+  the checkout's `workflows/*.json` and redirects to the workflow in the editor, or to the
+  editor's workflows without one. A team whose runner names no tracked branch is not
+  cloned. The apply is the server's, with each workflow a draft: it is created or updated
+  and never published, so its triggers run only in the team's runner; the team's
+  workflows carry the n8n tag `veoveo:{team}`, and what was applied is recorded in
+  `$HOME/.veoveo/n8n/teams/{team}.json`. Nothing is synced from Lore after the clone:
+  the checkout is the person's.
+- **Saving back.** Every five seconds the program reads each applied workflow's
+  version from n8n's public API; a version the person saved since is written back to
+  `$HOME/n8n/{team}/workflows/{file}.json` in the server's file form, the public API's
+  write shape, and recorded, so the next apply keeps it. A new workflow carrying the
+  team's tag gets a new file named after it, unless one by that name exists. Polling
+  the public API is the choice: n8n's external hooks run code inside n8n, which the
+  program keeps out of n8n's process. Nothing is committed or pushed: the person, or
+  their agent, commits and pushes with Lore, and the team's runner applies the push.
+- **The bridge.** The Veoveo Tool node finds the program's loopback bridge,
+  `/n8n/bridge/calls`, and a token of this start in n8n's environment when no run names
+  them, and posts the runner's request shape. The program admits the token, a tool's
+  Hub name `{server}__{tool}`, and calls it through the Hub as the owner with the
+  Computer's own credential, so the Hub decides each call as it decides the owner's.
+
 ## Webhooks
 
 The hooks are the server's `public_routes` under `/n8n/hooks/{path}`, with size and rate
@@ -490,7 +543,7 @@ its owner. The server relies on them as follows.
 | A server declares its public routes in `veoveo_surfaces`; the registration response names the instance's `veoveo_public_base`, and the Hub routes them through OpenShell's service exposure ([SDK registration](https://github.com/VeoveoAI/veoveo-hub-sdk/blob/main/crates/veoveo-hub-sdk/src/registration/DESIGN.md#surfaces)) | [Hub](https://github.com/VeoveoAI/veoveo-hub/blob/main/crates/veoveo-hub/DESIGN.md), [installation](https://github.com/VeoveoAI/veoveo-template-installation/blob/main/DESIGN.md) |
 | A branch's top-level Lore links run as runners: the parent's program in `/sandbox/src` over the linked repository's tracked branch at `/sandbox/link`, with the linked repository's network rules and providers, URIs `{slug}://{link}/…`, tools `{slug}__{link}__{tool}`, each runner's own database, and the caller's grant on the linked repository in the forwarded token | [Hub](https://github.com/VeoveoAI/veoveo-hub/blob/main/crates/veoveo-hub/DESIGN.md), [SDK registration](https://github.com/VeoveoAI/veoveo-hub-sdk/blob/main/crates/veoveo-hub-sdk/src/registration/DESIGN.md) |
 | The Hub is the installation's MCP Apps host for browsers: `/apps/{slug}/{page}` on the public host opens `ui://{slug}/{page}` for the signed-in person; self-contained apps run in opaque frames inside the Hub's sandbox proxy; a view of a linked server reads `{slug}://{link}/…` and calls `{link}__{tool}`; the host answers a view's `resources/list` with the view's own server's resources the person may read, from which the overview finds the links; and `ui/open-link` opens a program of the person's own Computer under `/computer/apps/` top-level | [Hub](https://github.com/VeoveoAI/veoveo-hub/blob/main/crates/veoveo-hub/DESIGN.md), [SDK Apps](https://github.com/VeoveoAI/veoveo-hub-sdk/blob/main/crates/veoveo-hub-sdk/src/apps/DESIGN.md) |
-| A person's Computer runs n8n as its program `n8n`, whose `open?repository=&workflow=` clones the team's repository, applies its workflows and opens one in the editor | [installation](https://github.com/VeoveoAI/veoveo-template-installation/blob/main/DESIGN.md) |
+| A person's Computer runs `veoveo-n8n-computer` as its program `n8n`, whose `open?repository=&workflow=` clones the team's repository, applies its workflows and opens one in the editor; the Hub forwards `/computer/c/{computer}/apps/n8n/…` to its port with the person's admission, without their cookies or credentials, and the Computer policy's `hub` rule names its binary | [Hub](https://github.com/VeoveoAI/veoveo-hub/blob/main/crates/veoveo-hub/DESIGN.md), [installation](https://github.com/VeoveoAI/veoveo-template-installation/blob/main/DESIGN.md) |
 | A runner's start command gives the parent's program the tracked branch's Lore ID as `VEOVEO_TRACKED_BRANCH`, which `n8n://status` names | [Hub](https://github.com/VeoveoAI/veoveo-hub/blob/main/crates/veoveo-hub/DESIGN.md) |
 | A team's repository requests installation provider profiles in `openshell/providers.yaml`; the Hub attaches to its runner those the control plane grants to that repository, with their refresh, and a person connects an account through the Hub | [Hub](https://github.com/VeoveoAI/veoveo-hub/blob/main/crates/veoveo-hub/DESIGN.md), [installation](https://github.com/VeoveoAI/veoveo-template-installation/blob/main/DESIGN.md) |
 | A factory instance reaches the model endpoint with a provider the installation attaches | [installation](https://github.com/VeoveoAI/veoveo-template-installation/blob/main/DESIGN.md) |
@@ -549,6 +602,7 @@ them new sandboxes.
 |---|---|
 | `src/contract` unit tests | Workflow names, execution IDs and typed addresses |
 | `src/instance`, `src/n8n`, `src/workflows` unit tests | The instance and admitted files' admission and a team's use of only what is admitted, n8n's environment without an editor, n8n's reported version, the generated secrets, the credential import document, the workflow write shape and webhook URLs, and each apply decision |
+| `tests/computer.rs` | `veoveo-n8n-computer` against a fake n8n, a fake Hub MCP endpoint and a fake Lore: `open` clones a team once at its tracked branch, applies tagged drafts and redirects to the workflow; a saved change and a new tagged workflow are written back in the file form; a team without a tracked branch or a repository no team serves opens nothing; `teams` lists them; the editor reaches n8n without the mount as its owner and sets no cookie; the bridge admits only the Computer's token and calls the Hub with the Computer's credential |
 | `tests/team.rs` | The team template and the tests' team read as `n8n/admitted.toml` admits them; a team without its optional files uses the Veoveo nodes alone; a team node type not admitted stops the start with a message naming it; the template's rules name n8n's program by its image path |
 | `tests/workflows.rs` | Against a real n8n on a migrated database: n8n migrates as the server's login, which may not create in the database, and its tables are prefixed and belong to the group role; n8n reports its version; the key is minted and kept, a credential imported; applying the template's webhook example creates and publishes, keeps, updates, replaces a version saved in n8n and archives by file name, records digests and versions, and its production webhook answers; a stale key in n8n's settings file over a fresh schema starts n8n with the database's key; a restart reads n8n's key from the database and reuses the API key; a new sandbox's empty disk starts with the key the database keeps, a new owner password and a newly minted API key; n8n's tables with no key refuse the start; the template's and the tests' team's workflows apply with the Veoveo nodes, and `hello-run` runs as a Task to its Veoveo Result's output, its execution recorded as the Task caller's |
 | `tests/runs.rs` | Through the SDK's in-process mesh and a fake n8n: a run completes from its Veoveo Result, its execution recorded as its Task caller's, fails and is stopped from n8n's execution through the status check, is cancelled by its caller, which stops the execution, and a restarted worker keeps waiting on the recorded execution; a run's job names its n8n instance, so a new n8n's execution numbers never meet an earlier one's |

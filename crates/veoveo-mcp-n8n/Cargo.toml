@@ -123,6 +123,11 @@ tokio = { workspace = true, features = ["full"] }
 name = "veoveo-mcp-n8n"
 required-features = ["server"]
 
+[[bin]]
+name = "veoveo-n8n-computer"
+path = "src/bin/veoveo-n8n-computer.rs"
+required-features = ["server"]
+
 [[test]]
 name = "database_conformance"
 required-features = ["server"]
@@ -149,4 +154,8 @@ required-features = ["server"]
 
 [[test]]
 name = "team"
+required-features = ["server"]
+
+[[test]]
+name = "computer"
 required-features = ["server"]

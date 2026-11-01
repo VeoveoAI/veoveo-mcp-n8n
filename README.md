@@ -11,7 +11,7 @@ The design is in [crates/veoveo-mcp-n8n/DESIGN.md](crates/veoveo-mcp-n8n/DESIGN.
 
 | Path | Holds |
 |---|---|
-| `crates/veoveo-mcp-n8n/` | The server |
+| `crates/veoveo-mcp-n8n/` | The server, and `veoveo-n8n-computer`, n8n in a person's own Computer |
 | `nodes/n8n-nodes-veoveo/` | The Veoveo nodes for n8n: Veoveo Trigger, Veoveo Result and Veoveo Tool |
 | `n8n/admitted.toml` | The node and credential types any team may use |
 | `templates/team/` | The template of a team's repository: `workflows/`, `n8n/instance.toml`, `openshell/providers.yaml` and `openshell/policy.yaml` |
