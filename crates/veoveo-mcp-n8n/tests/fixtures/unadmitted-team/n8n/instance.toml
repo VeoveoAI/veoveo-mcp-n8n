@@ -1,3 +1,4 @@
-# A team that uses a node type the n8n repository does not admit.
+# A team that names a node type a listed n8n repository, tests/fixtures/admitted-narrow.toml,
+# does not admit; the open parent admits it.
 tenant = "tenant-a"
 nodes = ["n8n-nodes-base.set", "n8n-nodes-base.httpRequest"]

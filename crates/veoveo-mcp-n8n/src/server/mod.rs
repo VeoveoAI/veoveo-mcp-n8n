@@ -26,7 +26,7 @@ use veoveo_task::TaskRuntime;
 use crate::{
     bridge::Bridge,
     hooks,
-    instance::{Admitted, Instance},
+    instance::{Admitted, Instance, NodeType},
     loopback,
     mcp::{self, N8nMcp, Served},
     n8n::{
@@ -44,7 +44,7 @@ use registration::Registered;
 /// What a runner serves, read from its checkouts before it contacts anything: the
 /// team's instance, which may use only what the n8n repository's `n8n/admitted.toml`
 /// admits, and the team's workflows. A team without `workflows/` applies none, and one
-/// whose instance names no node type and no credential uses the Veoveo nodes alone.
+/// whose instance names no node type uses every node type the n8n repository admits.
 pub struct Team {
     pub admitted: Admitted,
     pub instance: Instance,
@@ -96,12 +96,16 @@ pub async fn run() -> Result<()> {
         files,
     } = read_team(&args.admitted, &args.instance, &args.workflows)?;
     let app = AppHtml::load(&args.overview_app)?;
+    // The node types n8n loads beside the Veoveo nodes; none listed is every one n8n ships
+    // but the excluded ones.
+    let nodes = instance.node_types(&admitted);
     tracing::info!(
         tenant = instance.tenant.as_str(),
         workflows = files.len(),
-        nodes = instance.nodes.len(),
+        nodes = nodes
+            .as_ref()
+            .map_or_else(|| "all".to_owned(), |nodes| nodes.len().to_string()),
         credentials = instance.credentials.len(),
-        admitted_nodes = admitted.nodes.len(),
         "read the team's instance and workflows"
     );
     let Registered {
@@ -120,7 +124,7 @@ pub async fn run() -> Result<()> {
     let mut served = None;
     let maintained = client
         .maintain(registration, async {
-            served = Some(serve(&args, &deployment, &issued, &instance, &files, app).await);
+            served = Some(serve(&args, &deployment, &issued, &instance, nodes, &files, app).await);
         })
         .await;
     if let Err(error) = maintained {
@@ -137,6 +141,7 @@ async fn serve(
     deployment: &PublicDeployment,
     registered: &Issued,
     instance: &Instance,
+    nodes: Option<Vec<NodeType>>,
     files: &[WorkflowFile],
     app: AppHtml,
 ) -> Result<()> {
@@ -191,7 +196,7 @@ async fn serve(
             group_role: schema.group_role(),
         },
         webhook_url: hooks_url.clone(),
-        nodes: Some(instance.nodes.clone()),
+        nodes,
         veoveo_nodes: std::fs::canonicalize(&args.n8n_nodes)
             .with_context(|| format!("finding the Veoveo nodes at {}", args.n8n_nodes.display()))?,
         editor: None,

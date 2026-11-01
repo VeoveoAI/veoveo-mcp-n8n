@@ -1,0 +1,41 @@
+{
+  "name": "HTTP bearer",
+  "nodes": [
+    {
+      "id": "2a1b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0, 0],
+      "webhookId": "3b2c4d5e-6f70-4b8c-9d0e-1f2a3b4c5d6e",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "http-bearer",
+        "responseMode": "lastNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "4c3d5e6f-7081-4c9d-8e1f-2a3b4c5d6e7f",
+      "name": "Call",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [220, 0],
+      "parameters": {
+        "url": "={{ $json.body.url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBearerAuth",
+        "options": {}
+      },
+      "credentials": {
+        "httpBearerAuth": { "id": "teamBearer00001", "name": "Team bearer" }
+      }
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [[{ "node": "Call", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": { "executionOrder": "v1" }
+}

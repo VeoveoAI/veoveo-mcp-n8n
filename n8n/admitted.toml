@@ -1,20 +1,14 @@
-# What any team of this n8n repository may use. Each team's repository, linked at the top
-# level of a branch, names in its own n8n/instance.toml the node types its workflows use
-# and the credentials it imports; a runner whose team names a node or credential type this
-# file does not admit refuses to start, and says which. Every runner also loads the Veoveo
-# nodes. n8n's command, SSH, Git, local-file and MCP nodes are refused whatever this file
-# says.
+# What any team of this n8n repository may use. "all" admits every node type n8n ships,
+# or every credential type; a list admits only the ones it names, and a runner whose
+# team names a node or credential type the list does not admit refuses to start, and
+# says which. A team that names no node types in its n8n/instance.toml uses every one
+# this file admits. Every runner also loads the Veoveo nodes. n8n's command, SSH, Git,
+# local-file and MCP nodes are refused whatever this file says.
 
-# The node types a team's workflows may use.
-nodes = [
-  "n8n-nodes-base.webhook",
-  "n8n-nodes-base.respondToWebhook",
-  "n8n-nodes-base.manualTrigger",
-  "n8n-nodes-base.set",
-  "n8n-nodes-base.noOp",
-  "n8n-nodes-base.wait",
-  "n8n-nodes-base.stickyNote",
-]
+# The node types a team's workflows may use: "all", or a list such as
+# ["n8n-nodes-base.webhook", "n8n-nodes-base.set"].
+nodes = "all"
 
-# The credential types a team may import, such as "githubApi" or "httpHeaderAuth".
-credentials = []
+# The credential types a team may import: "all", or a list such as
+# ["githubApi", "httpHeaderAuth"].
+credentials = "all"

@@ -13,8 +13,8 @@ The design is in [crates/veoveo-mcp-n8n/DESIGN.md](crates/veoveo-mcp-n8n/DESIGN.
 |---|---|
 | `crates/veoveo-mcp-n8n/` | The server, and `veoveo-n8n-computer`, n8n in a person's own Computer |
 | `nodes/n8n-nodes-veoveo/` | The Veoveo nodes for n8n: Veoveo Trigger, Veoveo Result and Veoveo Tool |
-| `n8n/admitted.toml` | The node and credential types any team may use |
-| `templates/team/` | The template of a team's repository: `workflows/`, `n8n/instance.toml`, `openshell/providers.yaml` and `openshell/policy.yaml` |
+| `n8n/admitted.toml` | The node and credential types any team may use: `"all"` of each here, every type n8n ships but the always-excluded nodes, or a list |
+| `templates/team/` | The template of a team's repository: `workflows/`, `n8n/instance.toml`, which names no node types and so uses every one admitted, `openshell/providers.yaml` and `openshell/policy.yaml` |
 | `openshell/` | The factory layout |
 
 ## License

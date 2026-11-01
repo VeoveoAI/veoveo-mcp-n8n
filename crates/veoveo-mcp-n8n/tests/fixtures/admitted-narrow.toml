@@ -1,0 +1,10 @@
+# An n8n repository that admits a list of node types and no credential type.
+nodes = [
+  "n8n-nodes-base.webhook",
+  "n8n-nodes-base.respondToWebhook",
+  "n8n-nodes-base.manualTrigger",
+  "n8n-nodes-base.set",
+  "n8n-nodes-base.noOp",
+  "n8n-nodes-base.wait",
+  "n8n-nodes-base.stickyNote",
+]

@@ -137,7 +137,7 @@ the Hub gives that runner alone, and a runner serves one tenant, the one the tea
 | Path | Holds |
 |---|---|
 | `crates/veoveo-mcp-n8n/` | The server, its migrations, the overview App's document in `assets/`, tests and the documents it serves |
-| `crates/veoveo-mcp-n8n/tests/fixtures/` | The tests' teams: one with the tests' workflows, one with nothing optional and one that uses a node type this repository does not admit |
+| `crates/veoveo-mcp-n8n/tests/fixtures/` | The tests' teams: one with the tests' workflows and a header and a bearer credential, one with nothing optional and one that names a node type a listed repository, `admitted-narrow.toml`, does not admit |
 | `nodes/n8n-nodes-veoveo/` | n8n custom nodes in plain JavaScript, in n8n's community-node layout: Veoveo Trigger, Veoveo Result and Veoveo Tool. n8n loads them from `N8N_CUSTOM_EXTENSIONS` with no build step, since the factory image has Node.js but no compiler for TypeScript |
 | `n8n/admitted.toml` | The node and credential types any team may use, as [the instance](#the-instance) describes |
 | `templates/team/` | The template of a team's repository, as [teams](#teams) describes, with two example workflows |
@@ -152,7 +152,7 @@ A team's repository is any Lore repository made from `templates/team/`:
 | Path | Holds |
 |---|---|
 | `workflows/*.json` | The team's workflows, one JSON file each; none when the folder is missing |
-| `n8n/instance.toml` | The team's tenant, the node types its workflows use and its credential map, as [the instance](#the-instance) describes |
+| `n8n/instance.toml` | The team's tenant, the node types it narrows its runner to, if any, and its credential map, as [the instance](#the-instance) describes |
 | `openshell/providers.yaml` | The installation provider profiles the team requests, such as `vv-factory-model`; optional |
 | `openshell/policy.yaml` | Network rules for the team's integration hosts, under the same limits as a branch's; optional |
 
@@ -235,8 +235,8 @@ template.
 | `DB_POSTGRESDB_SSL_ENABLED`, `DB_POSTGRESDB_SSL_CA_FILE`, `DB_POSTGRESDB_SSL_REJECT_UNAUTHORIZED` | `true`, the bundle OpenShell names in `SSL_CERT_FILE`, `true` | n8n verifies PostgreSQL against the platform roots; n8n reads `DB_POSTGRESDB_SSL_CA` from the file its `_FILE` form names. Node reads only `NODE_EXTRA_CA_CERTS`, which OpenShell sets to the sandbox's interception CA alone. The grant's URL has `sslmode=verify-full`; on a test cluster it has `sslmode=disable` and n8n connects without TLS. Any other mode fails the start |
 | `N8N_ENCRYPTION_KEY` | The key in `n8n.instance_key`, beside n8n's data, as [the key](#the-key) describes | n8n encrypts its credentials, which hold only placeholders, so the key protects no real secret |
 | `N8N_BLOCK_ENV_ACCESS_IN_NODE`, `N8N_BLOCK_FILE_ACCESS_TO_N8N_FILES`, `N8N_RESTRICT_FILE_ACCESS_TO` | `true`, `true`, `/sandbox/n8n-files` | Workflows read no environment and no file outside one folder |
-| `NODES_INCLUDE`, `NODES_EXCLUDE` | The node types the team's `n8n/instance.toml` names, each admitted by `n8n/admitted.toml`, with the Veoveo nodes; and n8n's command, SSH, Git, local-file and MCP nodes | n8n loads only the team's node types and the Veoveo nodes, and never the excluded ones, which neither file can admit. No node runs commands, reaches past the policy's rules or speaks MCP |
-| `N8N_CUSTOM_EXTENSIONS` | The checkout's `nodes/n8n-nodes-veoveo` | The Veoveo nodes, which `NODES_INCLUDE` always admits |
+| `NODES_INCLUDE`, `NODES_EXCLUDE` | The node types the runner loads, as [the instance](#the-instance) decides, with the Veoveo nodes; and n8n's command, SSH, Git, local-file and MCP nodes. When the team loads every node type n8n ships, `NODES_INCLUDE` is unset | n8n loads the team's node types and the Veoveo nodes, and never the excluded ones, which neither file can admit. No node runs commands, reaches past the policy's rules or speaks MCP |
+| `N8N_CUSTOM_EXTENSIONS` | The checkout's `nodes/n8n-nodes-veoveo` | The Veoveo nodes, which n8n always loads |
 | `N8N_MCP_MANAGED_BY_ENV`, `N8N_MCP_ACCESS_ENABLED` | `true`, `false` | n8n's own MCP server stays off |
 | `N8N_COMMUNITY_PACKAGES_ENABLED`, `N8N_DIAGNOSTICS_ENABLED`, `N8N_VERSION_NOTIFICATIONS_ENABLED`, `N8N_TEMPLATES_ENABLED` | `false` | n8n installs and fetches nothing on its own |
 
@@ -248,23 +248,24 @@ Computer serves the editor, under its path.
 
 ### The Instance
 
-This repository's `n8n/admitted.toml` lists what any team may use; an unknown member is
-refused.
+This repository's `n8n/admitted.toml` states what any team may use; an unknown member is
+refused. Each of its two members is `"all"` or a list, and this repository admits all:
 
 ```toml
-nodes = ["n8n-nodes-base.webhook", "n8n-nodes-base.set"]
-credentials = ["githubApi"]
+nodes = "all"
+credentials = "all"
 ```
 
-`nodes`, at least one, are the node types a team's workflows may use, beside the Veoveo
-nodes; an excluded node type fails the start. `credentials` are the credential types a
-team may import.
+`nodes` are the node types a team's workflows may use, beside the Veoveo nodes: `"all"`,
+every one n8n ships but the excluded ones, or a list of at least one, which may not name
+an excluded node type. `credentials` are the credential types a team may import:
+`"all"`, or a list, which is empty when the file names none. A list such as
+`nodes = ["n8n-nodes-base.webhook", "n8n-nodes-base.set"]` narrows what teams may use.
 
 The team's `n8n/instance.toml` declares its instance; an unknown member is refused.
 
 ```toml
 tenant = "reference"
-nodes = ["n8n-nodes-base.webhook", "n8n-nodes-base.set"]
 
 [[credentials]]
 id = "githubToken0001"
@@ -274,10 +275,13 @@ data = { server = "https://api.github.com", user = "veoveo" }
 secrets = { accessToken = "GITHUB_TOKEN" }
 ```
 
-`tenant` is the one tenant the runner serves. `nodes` lists the node types n8n loads
-beside the Veoveo nodes, each one `n8n/admitted.toml` admits, and none for a team that
-uses only the Veoveo nodes; an excluded or unadmitted node type fails the start. Each
-credential, of a type `n8n/admitted.toml` admits, is imported under its
+`tenant` is the one tenant the runner serves. Without `nodes`, as the team template has
+it, the runner loads every node type `n8n/admitted.toml` admits: with `"all"`, every one
+n8n ships but the excluded ones, so `NODES_INCLUDE` stays unset; with a list, that list.
+A team may narrow it with `nodes`, the node types n8n loads beside the Veoveo nodes, each
+one `n8n/admitted.toml` admits, and `nodes = []` for the Veoveo nodes alone; an excluded
+or unadmitted node type fails the start. Each credential, of a type `n8n/admitted.toml`
+admits, which with `"all"` is any type, is imported under its
 `id`, 1 to 36 ASCII letters and digits, so a workflow names it. `data` holds the fields
 that hold no secret; `secrets` maps each secret field, by its path with `.` between the
 keys of nested objects such as `oauthTokenData.access_token`, to the provider
@@ -665,8 +669,8 @@ them new sandboxes.
 | `src/instance`, `src/n8n`, `src/workflows` unit tests | The instance and admitted files' admission and a team's use of only what is admitted, n8n's environment without an editor, n8n's reported version, the generated secrets, the credential import document, the workflow write shape and webhook URLs, and each apply decision |
 | `src/computer` unit tests | The program's flags, n8n's Assistant environment, sandbox paths and ids, and command output as text across reads |
 | `tests/computer.rs` | `veoveo-n8n-computer` against a fake n8n, a fake Hub MCP endpoint, a fake Lore and a fake model provider: `open` clones a team once at its tracked branch, applies tagged drafts and redirects to the workflow; a saved change and a new tagged workflow are written back in the file form; a team without a tracked branch or a repository no team serves opens nothing; `teams` lists them; the editor reaches n8n without the mount as its owner and sets no cookie; the bridge admits only the Computer's token and calls the Hub with the Computer's credential; the model endpoint admits only that token and streams the provider's answer to a request it sent with the Computer's model placeholder; the sandbox service admits only that token, keeps a sandbox in a directory of the person's home, runs commands there as the test's user with its own `HOME` and without withheld variables, reads one execution once per `exec_id`, resumes after a `seq`, kills a command at its limit or when deleted, keeps file calls in the sandbox and removes its directory; the start's search call reaches n8n as the owner |
-| `tests/team.rs` | The team template and the tests' team read as `n8n/admitted.toml` admits them; a team without its optional files uses the Veoveo nodes alone; a team node type not admitted stops the start with a message naming it; the template's rules name n8n's program by its image path |
-| `tests/workflows.rs` | Against a real n8n on a migrated database: n8n migrates as the server's login, which may not create in the database, and its tables are prefixed and belong to the group role; n8n reports its version; the key is minted and kept, a credential imported; applying the template's webhook example creates and publishes, keeps, updates, replaces a version saved in n8n and archives by file name, records digests and versions, and its production webhook answers; a stale key in n8n's settings file over a fresh schema starts n8n with the database's key; a restart reads n8n's key from the database and reuses the API key; a new sandbox's empty disk starts with the key the database keeps, a new owner password and a newly minted API key; n8n's tables with no key refuse the start; the template's and the tests' team's workflows apply with the Veoveo nodes, and `hello-run` runs as a Task to its Veoveo Result's output, its execution recorded as the Task caller's |
+| `tests/team.rs` | The team template and the tests' team read as `n8n/admitted.toml`, which admits all, admits them, and load every node type n8n ships since they name none; the tests' team's credential types are admitted without being named; a team without its optional files uses what the repository admits, and a listed repository's list; under a listed repository, a team node type or credential type not admitted stops the start with a message naming it; the template's rules name n8n's program by its image path |
+| `tests/workflows.rs` | Against a real n8n on a migrated database: n8n migrates as the server's login, which may not create in the database, and its tables are prefixed and belong to the group role; n8n reports its version; the key is minted and kept, a credential imported; applying the template's webhook example creates and publishes, keeps, updates, replaces a version saved in n8n and archives by file name, records digests and versions, and its production webhook answers; a stale key in n8n's settings file over a fresh schema starts n8n with the database's key; a restart reads n8n's key from the database and reuses the API key; a new sandbox's empty disk starts with the key the database keeps, a new owner password and a newly minted API key; n8n's tables with no key refuse the start; the template's and the tests' team's workflows apply with the Veoveo nodes and, the team naming no node types, every node type n8n ships: its HTTP Request calls with the bearer credential the team imports, whose type the repository admits without naming it, and sends its placeholder, and `hello-run` runs as a Task to its Veoveo Result's output, its execution recorded as the Task caller's |
 | `tests/runs.rs` | Through the SDK's in-process mesh and a fake n8n: a run completes from its Veoveo Result, its execution recorded as its Task caller's, fails and is stopped from n8n's execution through the status check, is cancelled by its caller, which stops the execution, and a restarted worker keeps waiting on the recorded execution; a run's job names its n8n instance, so a new n8n's execution numbers never meet an earlier one's |
 | `tests/bridge.rs` | Only table tools and only a running run's token, for the run's caller through the mesh's exchange of the run's Task; a caller without the provider's permission gets the Hub's refusal |
 | `tests/containment.rs` | n8n listens on loopback only, reads no environment or outside file, loads no excluded node, and a credential-bound endpoint refuses a value that is not its placeholder |

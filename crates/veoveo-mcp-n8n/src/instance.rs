@@ -1,8 +1,10 @@
 //! A team's `n8n/instance.toml`, from the linked repository: the one tenant the runner
 //! serves, the node types its workflows use and the credentials it imports, each secret
 //! field naming the provider environment variable whose placeholder fills it. The
-//! parent's `n8n/admitted.toml` lists the node and credential types any team may use.
-//! Neither file ever holds a credential value.
+//! parent's `n8n/admitted.toml` admits the node and credential types any team may use:
+//! `"all"`, every one n8n ships but the always-excluded nodes, or a list. A team that
+//! names no node types uses every one the parent admits. Neither file ever holds a
+//! credential value.
 use std::{collections::BTreeMap, fmt, path::Path};
 
 use serde::Deserialize;
@@ -39,7 +41,7 @@ pub enum InstanceError {
         path: String,
         source: Box<toml::de::Error>,
     },
-    #[error("n8n/admitted.toml admits no node type; name each one under `nodes`")]
+    #[error("n8n/admitted.toml admits no node type; set `nodes = \"all\"` or name each one")]
     NoNodes,
     #[error("the instance admits {0}, which no instance admits")]
     ExcludedNode(NodeType),
@@ -65,16 +67,57 @@ pub enum InstanceError {
     },
 }
 
+/// What the parent admits of one kind: everything n8n ships, `"all"`, or the listed ones.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Admits<T> {
+    All,
+    Only(Vec<T>),
+}
+
+impl<T: PartialEq> Admits<T> {
+    pub fn admits(&self, value: &T) -> bool {
+        match self {
+            Self::All => true,
+            Self::Only(listed) => listed.contains(value),
+        }
+    }
+}
+
+impl<T> Default for Admits<T> {
+    fn default() -> Self {
+        Self::Only(Vec::new())
+    }
+}
+
+impl<'de, T: Deserialize<'de>> Deserialize<'de> for Admits<T> {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Form<T> {
+            Word(String),
+            List(Vec<T>),
+        }
+        match Form::<T>::deserialize(deserializer)? {
+            Form::Word(word) if word == "all" => Ok(Self::All),
+            Form::Word(word) => Err(serde::de::Error::custom(format!(
+                "expected \"all\" or a list, found {word:?}"
+            ))),
+            Form::List(listed) => Ok(Self::Only(listed)),
+        }
+    }
+}
+
 /// What the parent's `n8n/admitted.toml` admits: the node and credential types any team's
-/// instance may use, beside the Veoveo nodes, which every instance loads.
+/// instance may use, beside the Veoveo nodes, which every instance loads. `"all"` admits
+/// every node type n8n ships but [`EXCLUDED_NODES`], or every credential type.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Admitted {
     /// The node types a team's workflows may use.
-    pub nodes: Vec<NodeType>,
-    /// The credential types a team may import.
+    pub nodes: Admits<NodeType>,
+    /// The credential types a team may import; none when the file names none.
     #[serde(default)]
-    pub credentials: Vec<CredentialType>,
+    pub credentials: Admits<CredentialType>,
 }
 
 impl Admitted {
@@ -88,15 +131,16 @@ impl Admitted {
             path: "n8n/admitted.toml".to_owned(),
             source: Box::new(source),
         })?;
-        if admitted.nodes.is_empty() {
-            return Err(InstanceError::NoNodes);
-        }
-        if let Some(node) = admitted
-            .nodes
-            .iter()
-            .find(|node| EXCLUDED_NODES.contains(&node.as_str()))
-        {
-            return Err(InstanceError::ExcludedNode(node.clone()));
+        if let Admits::Only(nodes) = &admitted.nodes {
+            if nodes.is_empty() {
+                return Err(InstanceError::NoNodes);
+            }
+            if let Some(node) = nodes
+                .iter()
+                .find(|node| EXCLUDED_NODES.contains(&node.as_str()))
+            {
+                return Err(InstanceError::ExcludedNode(node.clone()));
+            }
         }
         Ok(admitted)
     }
@@ -126,9 +170,10 @@ pub struct Instance {
     /// The one tenant the runner serves; a caller of another tenant is refused.
     pub tenant: TenantId,
     /// The node types the team's workflows use, beside the Veoveo nodes; n8n loads no
-    /// other. A team that uses only the Veoveo nodes names none.
+    /// other. Without `nodes` the team uses every node type the parent admits; `[]` is the
+    /// Veoveo nodes alone.
     #[serde(default)]
-    pub nodes: Vec<NodeType>,
+    pub nodes: Option<Vec<NodeType>>,
     /// The credentials the server imports at every start.
     #[serde(default)]
     pub credentials: Vec<CredentialMapping>,
@@ -148,14 +193,15 @@ impl Instance {
         if let Some(node) = self
             .nodes
             .iter()
-            .find(|node| !admitted.nodes.contains(node))
+            .flatten()
+            .find(|node| !admitted.nodes.admits(node))
         {
             return Err(InstanceError::NodeNotAdmitted(node.clone()));
         }
         if let Some(credential) = self
             .credentials
             .iter()
-            .find(|credential| !admitted.credentials.contains(&credential.credential_type))
+            .find(|credential| !admitted.credentials.admits(&credential.credential_type))
         {
             return Err(InstanceError::CredentialNotAdmitted {
                 credential: credential.id.clone(),
@@ -163,6 +209,17 @@ impl Instance {
             });
         }
         Ok(())
+    }
+
+    /// The node types n8n loads beside the Veoveo nodes: the team's own, or, when it names
+    /// none, the parent's list; `None` when that is every node type n8n ships but the
+    /// excluded ones.
+    pub fn node_types(&self, admitted: &Admitted) -> Option<Vec<NodeType>> {
+        match (&self.nodes, &admitted.nodes) {
+            (Some(nodes), _) => Some(nodes.clone()),
+            (None, Admits::Only(nodes)) => Some(nodes.clone()),
+            (None, Admits::All) => None,
+        }
     }
 
     pub fn parse(text: &str) -> Result<Self, InstanceError> {
@@ -173,6 +230,7 @@ impl Instance {
         if let Some(node) = instance
             .nodes
             .iter()
+            .flatten()
             .find(|node| EXCLUDED_NODES.contains(&node.as_str()))
         {
             return Err(InstanceError::ExcludedNode(node.clone()));
@@ -423,17 +481,65 @@ mod tests {
     fn the_instance_names_its_tenant_nodes_and_credentials() {
         let instance = Instance::parse(INSTANCE).unwrap();
         assert_eq!(instance.tenant.as_str(), "reference");
-        assert_eq!(instance.nodes.len(), 3);
+        assert_eq!(instance.nodes.as_ref().map(Vec::len), Some(3));
         assert_eq!(instance.credentials.len(), 2);
         let slack = &instance.credentials[1];
         let (field, variable) = slack.secrets.iter().next().unwrap();
         assert_eq!(field.keys(), ["oauthTokenData", "access_token"]);
         assert_eq!(variable.as_str(), "SLACK_ACCESS_TOKEN");
-        // A team that uses only the Veoveo nodes and imports no credential names its
-        // tenant alone.
-        let empty = Instance::parse("tenant = \"reference\"").unwrap();
-        assert!(empty.nodes.is_empty());
-        assert!(empty.credentials.is_empty());
+        // A team that names no node type uses what the parent admits; `[]` is the Veoveo
+        // nodes alone.
+        let open = Instance::parse("tenant = \"reference\"").unwrap();
+        assert!(open.nodes.is_none());
+        assert!(open.credentials.is_empty());
+        let veoveo = Instance::parse("tenant = \"reference\"\nnodes = []").unwrap();
+        assert_eq!(veoveo.nodes, Some(Vec::new()));
+    }
+
+    #[test]
+    fn an_open_parent_admits_every_node_and_credential_type_but_the_excluded() {
+        let all = Admitted::parse("nodes = \"all\"\ncredentials = \"all\"").unwrap();
+        assert_eq!(all.nodes, Admits::All);
+        assert_eq!(all.credentials, Admits::All);
+        // Any node and credential type, named or not.
+        let instance = Instance::parse(INSTANCE).unwrap();
+        instance.admitted_by(&all).unwrap();
+        let bearer = Instance::parse(
+            "tenant = \"reference\"\n[[credentials]]\nid = \"bearer\"\nname = \"Bearer\"\ntype = \"httpBearerAuth\"\nsecrets = { token = \"API_TOKEN\" }",
+        )
+        .unwrap();
+        bearer.admitted_by(&all).unwrap();
+        // A team without `nodes` loads every node type n8n ships but the excluded ones; a
+        // team that names some loads those.
+        assert_eq!(bearer.node_types(&all), None);
+        assert_eq!(instance.node_types(&all).map(|nodes| nodes.len()), Some(3));
+        // Under a listed parent, a team without `nodes` loads the parent's list.
+        let listed = Admitted::parse("nodes = [\"n8n-nodes-base.set\"]").unwrap();
+        assert_eq!(
+            bearer.node_types(&listed),
+            Some(vec![NodeType::parse("n8n-nodes-base.set").unwrap()])
+        );
+        // A file that names no credentials admits none.
+        assert!(bearer.admitted_by(&listed).is_err());
+        // The always-excluded nodes stay out of a team, whatever the parent admits.
+        assert!(
+            Instance::parse("tenant = \"reference\"\nnodes = [\"n8n-nodes-base.ssh\"]")
+                .unwrap_err()
+                .to_string()
+                .contains("which no instance admits")
+        );
+        for wrong in [
+            "nodes = \"every\"",
+            "nodes = \"all\"\ncredentials = \"any\"",
+        ] {
+            assert!(
+                Admitted::parse(wrong)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("expected \"all\" or a list"),
+                "{wrong}"
+            );
+        }
     }
 
     #[test]

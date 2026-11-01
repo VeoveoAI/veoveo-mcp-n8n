@@ -4,7 +4,10 @@
 //! publishes, keeps, updates, replaces a version saved in n8n and archives a removed file;
 //! after a restart it reuses its key; on a new sandbox's empty disk it starts with the key
 //! the database keeps, a new owner password and a newly minted API key; it applies the
-//! team template's examples and the tests' team's workflows with the Veoveo nodes, and runs
+//! team template's examples and the tests' team's workflows with the Veoveo nodes and,
+//! since the team names no node types under a repository that admits all, every node type
+//! n8n ships: its HTTP Request calls a loopback listener with the bearer credential the
+//! team imports, whose type the repository admits without naming it; and it runs
 //! `hello-run` as an MCP Task through the SDK's in-process mesh, whose Veoveo Result
 //! completes it and whose execution is recorded as the Task caller's. The n8n program is
 //! `VEOVEO_N8N_PROGRAM`, or `n8n` on `PATH`; the test also needs the PostgreSQL 18 server
@@ -43,7 +46,8 @@ use veoveo_store::ServerSchema;
 use veoveo_task::{Instance as ProcessInstance, TaskRuntime};
 
 const REPOSITORY: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../..");
-/// The tests' team, whose instance the parent's `n8n/admitted.toml` admits.
+/// The tests' team, whose instance the parent's `n8n/admitted.toml` admits: it names no
+/// node types and imports a header and a bearer credential.
 const TEAM: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/team");
 const CREDENTIAL: &str = "veoveoHeader001";
 
@@ -66,18 +70,23 @@ fn hello(greeting: &str) -> WorkflowFile {
 
 /// What n8n's production webhook of the example answers, once n8n registered it.
 async fn call_hello() -> Value {
+    call_webhook("hello-veoveo", json!({})).await
+}
+
+/// What n8n's production webhook at `path` answers `body`, once n8n registered it.
+async fn call_webhook(path: &str, body: Value) -> Value {
     let http = reqwest::Client::new();
     let url = N8nSettings::base_url()
-        .join("webhook/hello-veoveo")
+        .join(&format!("webhook/{path}"))
         .unwrap();
     for _ in 0..40 {
-        let response = http.post(url.clone()).body("{}").send().await.unwrap();
+        let response = http.post(url.clone()).json(&body).send().await.unwrap();
         if response.status().is_success() {
             return serde_json::from_slice(&response.bytes().await.unwrap()).unwrap();
         }
         tokio::time::sleep(Duration::from_millis(250)).await;
     }
-    panic!("n8n never answered the production webhook");
+    panic!("n8n never answered the production webhook {path}");
 }
 
 fn decided(decisions: &[Decision]) -> Vec<&'static str> {
@@ -112,13 +121,7 @@ async fn n8n_runs_on_the_servers_login_and_applies_workflows_by_file_name() {
         let admitted = Admitted::load(&PathBuf::from(REPOSITORY).join("n8n/admitted.toml")).unwrap();
         let instance =
             Instance::load(&PathBuf::from(TEAM).join("n8n/instance.toml"), &admitted).unwrap();
-        let credentials = Instance::parse(&format!(
-            "tenant = \"tenant-a\"\nnodes = [\"n8n-nodes-base.set\"]\n\
-             [[credentials]]\nid = \"{CREDENTIAL}\"\nname = \"Header\"\ntype = \"httpHeaderAuth\"\n\
-             data = {{ name = \"Authorization\" }}\nsecrets = {{ value = \"EXAMPLE_TOKEN\" }}\n"
-        ))
-        .unwrap()
-        .credentials;
+        let credentials = instance.credentials.clone();
         let directory = tempfile::tempdir().unwrap();
         let state = StateDirectory::prepare(directory.path().join("state/n8n")).unwrap();
         let mut settings = N8nSettings {
@@ -141,7 +144,7 @@ async fn n8n_runs_on_the_servers_login_and_applies_workflows_by_file_name() {
                 "https://hub.veoveo.test/instances/019a5b30-0000-7000-8000-000000000001/n8n/hooks/",
             )
             .unwrap(),
-            nodes: Some(instance.nodes.clone()),
+            nodes: instance.node_types(&admitted),
             veoveo_nodes: PathBuf::from(REPOSITORY)
                 .join("nodes/n8n-nodes-veoveo")
                 .canonicalize()
@@ -364,9 +367,38 @@ async fn n8n_runs_on_the_servers_login_and_applies_workflows_by_file_name() {
             .collect();
         assert!(decisions.contains(&("hello-run".to_owned(), "create")), "{decisions:?}");
         assert!(decisions.contains(&("resolve-time".to_owned(), "create")), "{decisions:?}");
+        assert!(decisions.contains(&("http-bearer".to_owned(), "create")), "{decisions:?}");
         let hello_run = store.workflow(tenant, &name("hello-run")).await.unwrap().unwrap();
         assert!(hello_run.runnable);
         assert!(client.workflow(&hello_run.n8n_id).await.unwrap().unwrap().is_active());
+
+        // n8n loaded its HTTP Request node, which the team never named, and the node calls
+        // with the team's bearer credential, whose token is the provider's placeholder.
+        let echo = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let echo_port = echo.local_addr().unwrap().port();
+        let echoing = tokio::spawn(async move {
+            let route = axum::routing::get(|headers: axum::http::HeaderMap| async move {
+                axum::Json(json!({
+                    "authorization": headers
+                        .get(axum::http::header::AUTHORIZATION)
+                        .and_then(|value| value.to_str().ok()),
+                }))
+            });
+            axum::serve(echo, axum::Router::new().route("/echo", route)).await
+        });
+        let echo_host = std::env::var("VEOVEO_N8N_TEST_LOOPBACK_HOST")
+            .unwrap_or_else(|_| "127.0.0.1".to_owned());
+        let answered = call_webhook(
+            "http-bearer",
+            json!({"url": format!("http://{echo_host}:{echo_port}/echo")}),
+        )
+        .await;
+        assert_eq!(
+            answered["authorization"],
+            "Bearer placeholder-for-TEAM_BEARER_TOKEN",
+            "{answered}"
+        );
+        echoing.abort();
 
         // `run` as an MCP Task: the worker calls the Veoveo Trigger, n8n runs the
         // workflow, and its Veoveo Result's callback completes the Task.

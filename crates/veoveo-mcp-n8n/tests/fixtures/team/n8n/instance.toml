@@ -1,8 +1,17 @@
-# The tests' team: the tenant the tests' callers belong to, and the node types of the
-# template's examples and the tests' own workflows.
+# The tests' team: the tenant the tests' callers belong to. It names no node types, so it
+# uses every one the n8n repository admits, and imports a header and a bearer credential,
+# whose types the repository admits without naming them.
 tenant = "tenant-a"
-nodes = [
-  "n8n-nodes-base.webhook",
-  "n8n-nodes-base.set",
-  "n8n-nodes-base.wait",
-]
+
+[[credentials]]
+id = "veoveoHeader001"
+name = "Header"
+type = "httpHeaderAuth"
+data = { name = "Authorization" }
+secrets = { value = "EXAMPLE_TOKEN" }
+
+[[credentials]]
+id = "teamBearer00001"
+name = "Team bearer"
+type = "httpBearerAuth"
+secrets = { token = "TEAM_BEARER_TOKEN" }

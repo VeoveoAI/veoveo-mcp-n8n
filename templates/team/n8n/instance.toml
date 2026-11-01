@@ -7,15 +7,15 @@
 tenant = "reference"
 
 # The node types the team's workflows use, beside the Veoveo nodes, which every runner
-# loads. Each must be one the n8n repository's n8n/admitted.toml admits; a runner whose
-# team names another refuses to start.
-nodes = [
-  "n8n-nodes-base.webhook",
-  "n8n-nodes-base.set",
-]
+# loads. Without `nodes`, the team uses every node type the n8n repository's
+# n8n/admitted.toml admits. A team may narrow it to the ones its workflows use, each
+# admitted there; `nodes = []` is the Veoveo nodes alone. For example:
+#
+# nodes = ["n8n-nodes-base.webhook", "n8n-nodes-base.set"]
 
 # Credentials the runner imports at every start with `n8n import:credentials`, under the
-# same ID, so workflows name them. Their types must be admitted too. For example:
+# same ID, so workflows name them. The n8n repository must admit their types, as it does
+# every type when its n8n/admitted.toml sets `credentials = "all"`. For example:
 #
 # [[credentials]]
 # id = "githubToken0001"
