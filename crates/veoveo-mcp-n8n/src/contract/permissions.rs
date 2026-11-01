@@ -56,10 +56,13 @@ impl PermissionDefinition for N8nPermission {
         }
     }
 
+    /// No permission carries a risk while the platform is in early access, so a role that
+    /// accepts no risk, such as `member`, runs a team's workflows when it grants the
+    /// permission and its holder has a grant on the team's repository. Running is to be
+    /// locked down later.
     fn risks(self) -> &'static [Risk] {
         match self {
-            Self::WorkflowsRun => &[Risk::Sensitive],
-            Self::WorkflowsRead | Self::ExecutionsWrite => &[],
+            Self::WorkflowsRead | Self::WorkflowsRun | Self::ExecutionsWrite => &[],
         }
     }
 }
@@ -80,9 +83,11 @@ mod tests {
     }
 
     #[test]
-    fn running_is_sensitive() {
-        assert_eq!(N8nPermission::WorkflowsRun.risks(), &[Risk::Sensitive]);
-        assert!(N8nPermission::WorkflowsRead.risks().is_empty());
+    fn no_permission_carries_a_risk_in_early_access() {
+        for permission in N8nPermission::ALL {
+            assert!(permission.risks().is_empty(), "{}", permission.as_str());
+        }
+        assert_eq!(N8nPermission::WorkflowsRun.access(), Access::Write);
         assert_eq!(N8nPermission::WorkflowsRead.access(), Access::Read);
     }
 }
