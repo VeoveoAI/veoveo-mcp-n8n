@@ -13,13 +13,14 @@ publish = false
 [workspace.dependencies]
 tempfile = "=3.27.0"
 # veoveo-core, pinned to one revision for every core crate: the revision the SDK pins.
-veoveo-fixtures = { git = "https://github.com/VeoveoAI/veoveo-core", rev = "422dcf268d690fcbc3fee435cf9b81e7f36ffeac" }
-veoveo-store = { git = "https://github.com/VeoveoAI/veoveo-core", rev = "422dcf268d690fcbc3fee435cf9b81e7f36ffeac" }
-veoveo-task = { git = "https://github.com/VeoveoAI/veoveo-core", rev = "422dcf268d690fcbc3fee435cf9b81e7f36ffeac" }
-veoveo-types = { git = "https://github.com/VeoveoAI/veoveo-core", rev = "422dcf268d690fcbc3fee435cf9b81e7f36ffeac" }
+veoveo-fixtures = { git = "https://github.com/VeoveoAI/veoveo-core", rev = "05b6c47540680e085cc5356ed4ba8742ecc78bff" }
+veoveo-skills = { git = "https://github.com/VeoveoAI/veoveo-core", rev = "05b6c47540680e085cc5356ed4ba8742ecc78bff" }
+veoveo-store = { git = "https://github.com/VeoveoAI/veoveo-core", rev = "05b6c47540680e085cc5356ed4ba8742ecc78bff" }
+veoveo-task = { git = "https://github.com/VeoveoAI/veoveo-core", rev = "05b6c47540680e085cc5356ed4ba8742ecc78bff" }
+veoveo-types = { git = "https://github.com/VeoveoAI/veoveo-core", rev = "05b6c47540680e085cc5356ed4ba8742ecc78bff" }
 # The Rust SDK for Veoveo MCP servers: the contract feature for declarations, the server
 # feature for hosting, registration, the forwarded identity and the server's surfaces.
-veoveo-hub-sdk = { git = "https://github.com/VeoveoAI/veoveo-hub-sdk", rev = "7360c0f96cb616c519d27256df214ff4f2e6e831", default-features = false }
+veoveo-hub-sdk = { git = "https://github.com/VeoveoAI/veoveo-hub-sdk", rev = "aff002265f681aa03ac8747ed5008f5c4eddf979", default-features = false }
 
 anyhow = "=1.0.104"
 # The SDK's router; the server's own routes, such as the hooks, are axum routers.
@@ -38,7 +39,7 @@ hex = "=0.4.3"
 # The SDK's HTTP client release; registration, n8n's client and the tests share it.
 reqwest = { version = "=0.13.5", default-features = false }
 # The rmcp fork the SDK pins; the tool router uses its macros.
-rmcp = { version = "=3.5.0", git = "https://github.com/VeoveoAI/rust-sdk", rev = "faa4e9d57dcb834740b6053c483ed2de7b8b8076" }
+rmcp = { version = "=3.8.0", git = "https://github.com/VeoveoAI/rust-sdk", rev = "d45f7f5e43e910f818400ca702cc904c5682c213" }
 rustls = { version = "0.23.46", default-features = false, features = ["ring", "std", "tls12"] }
 secrecy = "0.10.3"
 sha2 = "=0.11.0"

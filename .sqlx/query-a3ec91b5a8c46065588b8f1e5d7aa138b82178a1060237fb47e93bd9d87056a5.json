@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "INSERT INTO tasks.task (\n    id, server, deployment, tenant, tenant_id, owner_tenant, owner_principal, principal_id, owner_kind,\n    owner_issuer, owner_subject, surface, data_labels, work_context, authority, task_type,\n    recovery_class, input, idempotency_key, ttl_ms, poll_interval_ms, retention_pins,\n    status_message, retention_expires_at\n)\nVALUES (\n    $1, $2, $23, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19,\n    $20, $21, 'Queued', now() + $22::bigint * interval '1 millisecond'\n)\nON CONFLICT (server, deployment, tenant, owner_principal, surface, idempotency_key)\nWHERE idempotency_key IS NOT NULL\nDO NOTHING\nRETURNING\n    id,\n    server,\n    deployment,\n    tenant,\n    owner_tenant,\n    owner_principal,\n    owner_kind AS \"owner_kind: PrincipalKind\",\n    owner_issuer,\n    owner_subject,\n    surface,\n    data_labels,\n    work_context,\n    authority AS \"authority: Json<InvocationAuthority>\",\n    task_type,\n    recovery_class AS \"recovery_class: RecoveryClass\",\n    input,\n    idempotency_key,\n    ttl_ms,\n    poll_interval_ms,\n    status AS \"status: TaskStatus\",\n    status_message,\n    progress,\n    result,\n    result_uri,\n    error_code,\n    error_message,\n    error_details,\n    owner_instance AS \"owner_instance: InstanceId\",\n    revision,\n    retention_pins,\n    created_at,\n    updated_at,\n    started_at,\n    cancel_requested_at,\n    completed_at,\n    retention_expires_at\n",
+  "query": "-- $1–$7 select the caller's Tasks: server, tenant, principal, surface, explicit tenant\n-- claim, held data labels, and the optional operation selection.\nSELECT\n    id,\n    server,\n    deployment,\n    tenant,\n    owner_tenant,\n    owner_principal,\n    owner_kind AS \"owner_kind: PrincipalKind\",\n    owner_issuer,\n    owner_subject,\n    surface,\n    data_labels,\n    authority AS \"authority: Json<InvocationAuthority>\",\n    task_type,\n    recovery_class AS \"recovery_class: RecoveryClass\",\n    input,\n    idempotency_key,\n    ttl_ms,\n    poll_interval_ms,\n    status AS \"status: TaskStatus\",\n    status_message,\n    progress,\n    result,\n    result_uri,\n    error_code,\n    error_message,\n    error_details,\n    owner_instance AS \"owner_instance: InstanceId\",\n    revision,\n    retention_pins,\n    created_at,\n    updated_at,\n    started_at,\n    cancel_requested_at,\n    completed_at,\n    retention_expires_at\nFROM tasks.task\nWHERE server = $1 AND deployment = $9\n    AND tenant = $2\n    AND owner_principal = $3\n    AND surface = $4\n    AND owner_tenant IS NOT DISTINCT FROM $5\n    AND data_labels <@ $6\n    AND ($7::text[] IS NULL OR task_type = ANY ($7))\n    AND id = $8\n",
   "describe": {
     "columns": [
       {
@@ -126,17 +126,6 @@
       },
       {
         "ordinal": 11,
-        "name": "work_context",
-        "type_info": "Text",
-        "origin": {
-          "Table": {
-            "table": "tasks.task",
-            "name": "work_context"
-          }
-        }
-      },
-      {
-        "ordinal": 12,
         "name": "authority: Json<InvocationAuthority>",
         "type_info": "Jsonb",
         "origin": {
@@ -147,7 +136,7 @@
         }
       },
       {
-        "ordinal": 13,
+        "ordinal": 12,
         "name": "task_type",
         "type_info": "Text",
         "origin": {
@@ -158,7 +147,7 @@
         }
       },
       {
-        "ordinal": 14,
+        "ordinal": 13,
         "name": "recovery_class: RecoveryClass",
         "type_info": "Text",
         "origin": {
@@ -169,7 +158,7 @@
         }
       },
       {
-        "ordinal": 15,
+        "ordinal": 14,
         "name": "input",
         "type_info": "Jsonb",
         "origin": {
@@ -180,7 +169,7 @@
         }
       },
       {
-        "ordinal": 16,
+        "ordinal": 15,
         "name": "idempotency_key",
         "type_info": "Text",
         "origin": {
@@ -191,7 +180,7 @@
         }
       },
       {
-        "ordinal": 17,
+        "ordinal": 16,
         "name": "ttl_ms",
         "type_info": "Int8",
         "origin": {
@@ -202,7 +191,7 @@
         }
       },
       {
-        "ordinal": 18,
+        "ordinal": 17,
         "name": "poll_interval_ms",
         "type_info": "Int8",
         "origin": {
@@ -213,7 +202,7 @@
         }
       },
       {
-        "ordinal": 19,
+        "ordinal": 18,
         "name": "status: TaskStatus",
         "type_info": "Text",
         "origin": {
@@ -224,7 +213,7 @@
         }
       },
       {
-        "ordinal": 20,
+        "ordinal": 19,
         "name": "status_message",
         "type_info": "Text",
         "origin": {
@@ -235,7 +224,7 @@
         }
       },
       {
-        "ordinal": 21,
+        "ordinal": 20,
         "name": "progress",
         "type_info": "Float8",
         "origin": {
@@ -246,7 +235,7 @@
         }
       },
       {
-        "ordinal": 22,
+        "ordinal": 21,
         "name": "result",
         "type_info": "Jsonb",
         "origin": {
@@ -257,7 +246,7 @@
         }
       },
       {
-        "ordinal": 23,
+        "ordinal": 22,
         "name": "result_uri",
         "type_info": "Text",
         "origin": {
@@ -268,7 +257,7 @@
         }
       },
       {
-        "ordinal": 24,
+        "ordinal": 23,
         "name": "error_code",
         "type_info": "Text",
         "origin": {
@@ -279,7 +268,7 @@
         }
       },
       {
-        "ordinal": 25,
+        "ordinal": 24,
         "name": "error_message",
         "type_info": "Text",
         "origin": {
@@ -290,7 +279,7 @@
         }
       },
       {
-        "ordinal": 26,
+        "ordinal": 25,
         "name": "error_details",
         "type_info": "Jsonb",
         "origin": {
@@ -301,7 +290,7 @@
         }
       },
       {
-        "ordinal": 27,
+        "ordinal": 26,
         "name": "owner_instance: InstanceId",
         "type_info": "Int4",
         "origin": {
@@ -312,7 +301,7 @@
         }
       },
       {
-        "ordinal": 28,
+        "ordinal": 27,
         "name": "revision",
         "type_info": "Int8",
         "origin": {
@@ -323,7 +312,7 @@
         }
       },
       {
-        "ordinal": 29,
+        "ordinal": 28,
         "name": "retention_pins",
         "type_info": "TextArray",
         "origin": {
@@ -334,7 +323,7 @@
         }
       },
       {
-        "ordinal": 30,
+        "ordinal": 29,
         "name": "created_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -345,7 +334,7 @@
         }
       },
       {
-        "ordinal": 31,
+        "ordinal": 30,
         "name": "updated_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -356,7 +345,7 @@
         }
       },
       {
-        "ordinal": 32,
+        "ordinal": 31,
         "name": "started_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -367,7 +356,7 @@
         }
       },
       {
-        "ordinal": 33,
+        "ordinal": 32,
         "name": "cancel_requested_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -378,7 +367,7 @@
         }
       },
       {
-        "ordinal": 34,
+        "ordinal": 33,
         "name": "completed_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -389,7 +378,7 @@
         }
       },
       {
-        "ordinal": 35,
+        "ordinal": 34,
         "name": "retention_expires_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -402,28 +391,14 @@
     ],
     "parameters": {
       "Left": [
-        "Uuid",
         "Text",
-        "Text",
-        "Uuid",
-        "Text",
-        "Text",
-        "Uuid",
         "Text",
         "Text",
         "Text",
         "Text",
         "TextArray",
-        "Text",
-        "Jsonb",
-        "Text",
-        "Text",
-        "Jsonb",
-        "Text",
-        "Int8",
-        "Int8",
         "TextArray",
-        "Int8",
+        "Uuid",
         "Uuid"
       ]
     },
@@ -433,7 +408,6 @@
       false,
       false,
       true,
-      false,
       false,
       false,
       false,
@@ -466,5 +440,5 @@
       true
     ]
   },
-  "hash": "524a1d39d6a9bebcf377be23e654dd14ea189edc4299161e638d2bbd7f906446"
+  "hash": "a3ec91b5a8c46065588b8f1e5d7aa138b82178a1060237fb47e93bd9d87056a5"
 }

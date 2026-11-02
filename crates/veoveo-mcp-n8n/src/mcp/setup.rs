@@ -6,6 +6,7 @@ use rmcp::model::{ServerCapabilities, ServerConfig};
 use veoveo_hub_sdk::{
     docs::ServerDocs,
     server_contract::{McpServerContract, McpServerSetup},
+    skills::ServerSkills,
 };
 use veoveo_types::ResourceScheme;
 
@@ -15,6 +16,10 @@ use crate::contract::{N8nProvider, N8nScope};
 /// `n8n://docs/{doc_id}`, `n8n://contract` and the admin document routes.
 pub(crate) static SERVER_DOCS: LazyLock<ServerDocs> =
     LazyLock::new(|| veoveo_hub_sdk::server_docs!("n8n"));
+
+/// The skills under `skills/`, embedded at build time and served at `skill://n8n/…`.
+pub(crate) static SERVER_SKILLS: LazyLock<ServerSkills> =
+    LazyLock::new(|| veoveo_hub_sdk::server_skills!("n8n"));
 
 pub struct N8nContract;
 
@@ -34,6 +39,9 @@ impl McpServerContract for N8nContract {
     }
     fn documents() -> &'static ServerDocs {
         &SERVER_DOCS
+    }
+    fn skills() -> &'static ServerSkills {
+        &SERVER_SKILLS
     }
     fn server_config() -> ServerConfig {
         server_config()
@@ -55,19 +63,27 @@ fn server_config() -> ServerConfig {
     let mut info = ServerConfig::default();
     info.capabilities = capabilities;
     info.server_info = rmcp::model::Implementation::new("n8n", env!("CARGO_PKG_VERSION"));
-    info.instructions = Some(
-        "A team's n8n workflows. List them at `n8n://workflows`, read one with its \
-         webhooks' public URLs at `n8n://workflow/{workflow}`, run one that starts with the \
-         Veoveo Trigger with `run`, and read what the runner applied at `n8n://status`. A \
-         workflow is named by its file under the team repository's `workflows/`; the \
-         overview App is `ui://n8n/overview`."
-            .to_owned(),
-    );
+    info.instructions = Some(INSTRUCTIONS.to_owned());
     info
 }
 
+/// What the server is and which skills say how to use it.
+const INSTRUCTIONS: &str = "A team's n8n workflows, each team at its own link: \
+     `n8n__{link}__run` and `n8n://{link}/…`, with the overview App at ui://n8n/overview. \
+     Its skills say how: skill://n8n/author-a-workflow/SKILL.md and \
+     skill://n8n/run-a-workflow/SKILL.md.";
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_instructions_name_every_skill_the_server_serves() {
+        let skills = &*super::SERVER_SKILLS;
+        assert_eq!(skills.skills().len(), 2);
+        for skill in skills.skills() {
+            assert!(super::INSTRUCTIONS.contains(&skill.uri), "{}", skill.uri);
+        }
+    }
+
     #[test]
     fn the_setup_round_trips_every_resource_and_template() {
         let setup = &*super::SERVER_SETUP;

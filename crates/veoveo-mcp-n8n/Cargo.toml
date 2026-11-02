@@ -57,13 +57,19 @@ server = [
     "dep:tracing",
     "dep:url",
     "dep:uuid",
+    "dep:veoveo-skills",
     "dep:veoveo-store",
     "dep:veoveo-task",
     "dep:tokio-util",
     "dep:futures",
 ]
 
+[build-dependencies]
+# Embeds the skills under skills/ at build time.
+veoveo-skills = { workspace = true, features = ["build"] }
+
 [dependencies]
+veoveo-skills = { workspace = true, optional = true }
 schemars = { workspace = true, optional = true }
 serde = { workspace = true, optional = true }
 thiserror = { workspace = true, optional = true }

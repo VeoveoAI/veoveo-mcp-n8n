@@ -1,0 +1,46 @@
+{
+  "name": "Hello Veoveo",
+  "nodes": [
+    {
+      "id": "5b2f3c4e-0d1a-4c55-9a8e-6f7a1b2c3d4e",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0, 0],
+      "webhookId": "9f1c2d3e-4b5a-4c6d-8e7f-0a1b2c3d4e5f",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "hello-veoveo",
+        "responseMode": "lastNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "7c3d4e5f-1a2b-4c3d-9e8f-1b2c3d4e5f60",
+      "name": "Greeting",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [220, 0],
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "id": "c1d2e3f4-5a6b-4c7d-8e9f-0a1b2c3d4e5f",
+              "name": "greeting",
+              "value": "Hello from Veoveo",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      }
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [[{ "node": "Greeting", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": { "executionOrder": "v1" }
+}

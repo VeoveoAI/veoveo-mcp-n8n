@@ -57,7 +57,8 @@ them for a writer.
 
 | Standard or protocol | Implemented profile |
 |---|---|
-| [Model Context Protocol](https://modelcontextprotocol.io/specification/) | Version `2026-07-28`, JSON-RPC 2.0 over Streamable HTTP, through `veoveo-hub-sdk` under the hosted MCP contract: tools, resources and templates, and MCP Tasks for runs. No other version. |
+| [Model Context Protocol](https://modelcontextprotocol.io/specification/) | Version `2026-07-28`, JSON-RPC 2.0 over Streamable HTTP, through `veoveo-hub-sdk` under the hosted MCP contract: tools, resources and templates, MCP Tasks for runs, and skills. No other version. |
+| [MCP Skills extension](https://github.com/modelcontextprotocol/ext-skills) `io.modelcontextprotocol/skills`, SEP-2640, and the [Agent Skills](https://agentskills.io/specification) format | The skills under `skills/`, embedded at build time and served at `skill://n8n/{name}/{path}` through the SDK, one set the runners of every link share; see [Skills](#skills) |
 | [n8n](https://docs.n8n.io/) | The [VeoveoAI fork](https://github.com/VeoveoAI/n8n) at one pinned revision, carrying only the changes its `VEOVEO_FORK.md` records, and configured only through its documented environment, its command line (`import:credentials`), its public REST API (`/api/v1` with `X-N8N-API-KEY`) and its custom-node extension point (`N8N_CUSTOM_EXTENSIONS`). The server uses n8n's login and API-key routes only to mint its API key, when n8n does not accept the one it kept. n8n's own MCP server and MCP client nodes are not used. |
 | n8n workflow JSON | The source of each workflow, in the form n8n exports it |
 | [JWT access tokens RFC 9068](https://www.rfc-editor.org/rfc/rfc9068.html), [Token Exchange RFC 8693](https://www.rfc-editor.org/rfc/rfc8693.html) | The Hub forwards each request with a token naming the caller. A run's calls into other servers exchange the run's Task for a token acting for its caller |
@@ -87,6 +88,22 @@ The server answers these questions for a caller:
 | Resource | `n8n://execution/{execution_id}` | `n8n.workflows.read` | One execution: status, timing, the failing node and the error, and its data as the [data rule](#execution-data) admits |
 | App | `ui://n8n/overview` | `n8n.workflows.read` | The [overview](#the-overview-app) of every team the person reaches, with `run` linked for the model and the App |
 | Resource | `n8n://docs`, `n8n://docs/{doc_id}`, `n8n://contract` | `n8n.workflows.read` | The embedded documents and the contract declaration |
+
+### Skills
+
+How an agent authors and runs workflows is in the server's skills, which a host loads
+when a task needs one. The `instructions` say what the server is, that each team is a
+link, so its tools are `n8n__{link}__{tool}` and its resources `n8n://{link}/…` through
+the Hub, and name each skill's address:
+
+| Skill | Guidance |
+|---|---|
+| `author-a-workflow` | the file form and name under `workflows/`, the Veoveo Trigger, Result and Tool contract with their `CUSTOM.*` types and the bridge's tool names, admitted node and credential types, credentials as provider placeholders, and drafting in the person's own n8n before pushing with Lore; the team template's workflows and `n8n/instance.toml` ride along as `references/` |
+| `run-a-workflow` | finding a team's workflows, `run` as a Task with the trigger's input, executions, retry and stop |
+
+The skill text names tools and resources as callers see them through the Hub, with the
+link. Each skill file is a resource of the server under its document policy,
+`n8n.workflows.read`.
 
 A workflow is named by its file under the team repository's `workflows/`, such as
 `invoice-intake` for `workflows/invoice-intake.json`, never by n8n's internal ID: lowercase ASCII letters and
