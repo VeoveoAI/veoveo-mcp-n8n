@@ -100,8 +100,29 @@ pub fn assistant_environment(
             "N8N_INSTANCE_AI_MCP_SERVERS",
             format!("veoveo={}", tools_url(port, token)),
         ),
+        // The fork's variable: the MCP skills of the Hub's own and of the platform's native
+        // servers load without asking; any other skill asks before it loads, and the
+        // Assistant asks before each sandbox command while such a skill is active.
+        (
+            "N8N_INSTANCE_AI_MCP_APPROVED_SKILLS",
+            APPROVED_SKILLS
+                .iter()
+                .map(|prefix| format!("veoveo={prefix}"))
+                .collect::<Vec<_>>()
+                .join(","),
+        ),
     ]
 }
+
+/// The skills the installation pre-approves for the Assistant, by URI prefix: the Hub's
+/// own and those of the native servers, as for OpenCode.
+pub const APPROVED_SKILLS: [&str; 5] = [
+    "skill://veoveo/",
+    "skill://console/",
+    "skill://artifact/",
+    "skill://media/",
+    "skill://embedding/",
+];
 
 pub async fn run() -> Result<()> {
     let _ = rustls::crypto::ring::default_provider().install_default();
@@ -314,6 +335,11 @@ mod tests {
             (
                 "N8N_INSTANCE_AI_MCP_SERVERS",
                 "veoveo=http://127.0.0.1:5680/n8n/mcp/start-token",
+            ),
+            (
+                "N8N_INSTANCE_AI_MCP_APPROVED_SKILLS",
+                "veoveo=skill://veoveo/,veoveo=skill://console/,veoveo=skill://artifact/,\
+                 veoveo=skill://media/,veoveo=skill://embedding/",
             ),
         ]);
         assert_eq!(

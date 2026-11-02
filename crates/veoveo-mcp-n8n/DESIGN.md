@@ -635,6 +635,15 @@ credential rule names it.
     with neither is a write tool. A tool that requires approval stops the Assistant's
     run until the person approves or denies the call in the chat; a blocked one is not
     offered to the model. The Hub decides every call that is made.
+  - *Skills.* The Hub serves the skills of the servers the owner reaches, and its own,
+    through the MCP Skills extension, and the fork's Assistant lists them as skills with
+    their origin and loads one only when a task needs it. The fork's
+    `N8N_INSTANCE_AI_MCP_APPROVED_SKILLS` pre-approves, for the `veoveo` server, the
+    skills under `skill://veoveo/`, `skill://console/`, `skill://artifact/`,
+    `skill://media/` and `skill://embedding/`, as the installation does for OpenCode. Any
+    other skill, such as one of a factory-served branch, asks the owner before it loads and
+    again when its files change, and while it is active the Assistant asks before each
+    command it runs in its sandbox.
   - *Search and browser use.* The program turns the Assistant's web search off in n8n's
     settings at each start, as the owner (`PUT /rest/instance-ai/settings` with
     `{"searchDisabled": true}`): a person's own n8n has no search provider, and n8n
