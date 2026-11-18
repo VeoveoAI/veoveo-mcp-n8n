@@ -4,7 +4,10 @@
 all-features = true
 
 [advisories]
-ignore = []
+ignore = [
+    # Unmaintained with no vulnerability and no patched release; these go when the graph drops them.
+    { id = "RUSTSEC-2026-0543", reason = "chrono is unmaintained, with no patched release; core and the SDK use it, and rmcp, schemars and sqlx depend on it" },
+]
 
 [licenses]
 # Licenses compatible with distributing an Apache-2.0 project. Add a license here only
