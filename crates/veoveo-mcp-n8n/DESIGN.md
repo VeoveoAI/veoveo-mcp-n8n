@@ -712,7 +712,7 @@ that names its class, and no usage is recorded.
 
 | Path | Holds |
 |---|---|
-| `openshell/image/` | The template's Rust image, `rust:1.99.0-trixie` by digest, with Node.js and n8n copied from the VeoveoAI fork's image, built at its pinned revision on `node:26.12.1-trixie-slim` into the installation's registry and named by digest. Both are Debian trixie, so `node`, n8n's native modules and the installation's Lore command line link against one glibc |
+| `openshell/image/` | The template's Rust image, `rust:1.100.0-trixie` by digest, with Node.js and n8n copied from the VeoveoAI fork's image, built at its pinned revision on `node:26.12.1-trixie-slim` into the installation's registry and named by digest. Both are Debian trixie, so `node`, n8n's native modules and the installation's Lore command line link against one glibc |
 | `openshell/run` | Builds the server, then `exec`s it with the team's workflows and instance under `/sandbox/link` and `n8n/admitted.toml`; the Veoveo nodes need no build |
 | `openshell/policy.yaml` | The rule `n8n_database`, which admits n8n's program, `/usr/local/bin/node`, to the PostgreSQL host and port of the installation's base rule. A team's integration hosts are in its own policy |
 

@@ -12,7 +12,7 @@
 # Only the factory's BuildKit reaches that registry.
 FROM registry.veoveo-system.svc.cluster.local:5000/veoveo/n8n@sha256:8577f9df2d4a3ce9529118378db0bb3189ed250e2c9d8a3e8e7a0906885de2a7 AS n8n
 
-FROM rust:1.99.0-trixie@sha256:6ff07edce8775d0f64be7aba9197229407301bddf2054d62c27b541a6238a181
+FROM rust:1.100.0-trixie@sha256:223cc32ddca8f3ee90c436dbc94b6b5f052ea7f9653c5201e9612f08ad7d21b8
 USER root
 # librdkafka1 is the one runtime library of n8n's native modules that the Rust image lacks.
 RUN apt-get update \
