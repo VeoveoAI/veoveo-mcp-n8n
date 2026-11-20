@@ -65,7 +65,7 @@ them for a writer.
 | [OpenShell](https://github.com/VeoveoAI/OpenShell) policy and providers | The sandbox policy names each program's endpoints. Integration credentials are providers, and n8n holds only their placeholders |
 | MCP Apps SEP-1865 `2026-01-26` | The overview App `ui://n8n/overview`, a self-contained view under the SDK's [Apps contract](https://github.com/VeoveoAI/veoveo-hub-sdk/blob/main/crates/veoveo-hub-sdk/src/apps/DESIGN.md), which the runners of every link share |
 | [Lore](https://github.com/VeoveoAI/lore) links | A branch's top-level links name the teams' repositories; the Hub runs each as a runner, as its [design](https://github.com/VeoveoAI/veoveo-hub/blob/main/crates/veoveo-hub/DESIGN.md) describes |
-| [PostgreSQL 18](https://www.postgresql.org/docs/18/) | The schema `n8n` holds the server's tables and n8n's own, which n8n's migrations create under the table prefix `n8n_` |
+| [PostgreSQL 19](https://www.postgresql.org/docs/19/) | The schema `n8n` holds the server's tables and n8n's own, which n8n's migrations create under the table prefix `n8n_` |
 | [JSON Schema Draft 2020-12](https://json-schema.org/draft/2020-12/) | Tool inputs and results, generated from the contract's types. A run's input and output are the workflow's own JSON |
 
 ## Domain Contract

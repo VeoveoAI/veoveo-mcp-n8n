@@ -5,7 +5,7 @@
 //! waiting on the recorded execution instead of dispatching again. A run's job names its
 //! n8n instance, so n8n's execution numbers starting again over a reset schema never meet
 //! an earlier instance's. n8n's side is the
-//! fake's; the real n8n's run is `tests/workflows.rs`. Requires the PostgreSQL 18 server
+//! fake's; the real n8n's run is `tests/workflows.rs`. Requires the PostgreSQL 19 server
 //! programs on `PATH`.
 mod support;
 

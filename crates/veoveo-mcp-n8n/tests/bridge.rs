@@ -4,7 +4,7 @@
 //! the permission the server declared in its `uses`; a tool outside the table, a token of
 //! no run and the token of a run that ended are refused, and a caller without the
 //! provider's permission gets the Hub's refusal. The fake Time server in `support` stands
-//! for Time. Requires the PostgreSQL 18 server programs on `PATH`.
+//! for Time. Requires the PostgreSQL 19 server programs on `PATH`.
 mod support;
 
 use std::time::Duration;

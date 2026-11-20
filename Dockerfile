@@ -16,7 +16,7 @@ ARG N8N_IMAGE=registry.veoveo-system.svc.cluster.local:5000/veoveo/n8n@sha256:85
 FROM ${N8N_IMAGE} AS n8n
 
 FROM rust:1.100.0-trixie@sha256:223cc32ddca8f3ee90c436dbc94b6b5f052ea7f9653c5201e9612f08ad7d21b8 AS dev
-# PostgreSQL 18.7 from the PGDG repository, whose signing key Debian's postgresql-common
+# PostgreSQL 19.0 from the PGDG repository, whose signing key Debian's postgresql-common
 # ships. Tests start their own clusters, so the packages create none.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates clang cmake git pkg-config procps postgresql-common \
@@ -24,10 +24,10 @@ RUN apt-get update \
     && mkdir -p /etc/postgresql-common/createcluster.d \
     && printf 'create_main_cluster = false\n' > /etc/postgresql-common/createcluster.d/veoveo.conf \
     && apt-get install -y --no-install-recommends \
-        postgresql-18=18.7-1.pgdg13+5 postgresql-client-18=18.7-1.pgdg13+5 libpq5=19.0-2.pgdg13+1 \
+        postgresql-19=19.0-2.pgdg13+1 postgresql-client-19=19.0-2.pgdg13+1 libpq5=19.0-2.pgdg13+1 \
     && rm -rf /var/lib/apt/lists/* /var/log/apt /var/log/dpkg.log \
     && rustup component add clippy rustfmt
-ENV PATH=/usr/lib/postgresql/18/bin:${PATH}
+ENV PATH=/usr/lib/postgresql/19/bin:${PATH}
 # Node.js and n8n as the fork's image lays them out, for the tests that run a real n8n.
 # Both images are Debian trixie; librdkafka1 is the one library of n8n's native modules
 # the Rust image lacks.

@@ -6,7 +6,7 @@
 //! to n8n's webhooks. Callers are `user-1`, the test user, and `user-2` of `tenant-a`,
 //! each with a forwarded grant on the runner's linked repository or none. n8n's answers
 //! come from the fake n8n in `support`, which proves the server's side, not n8n. Requires
-//! the PostgreSQL 18 server programs on `PATH`.
+//! the PostgreSQL 19 server programs on `PATH`.
 mod support;
 
 use std::{sync::Arc, time::Duration};

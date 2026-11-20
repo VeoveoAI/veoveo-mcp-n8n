@@ -10,7 +10,7 @@
 //! team imports, whose type the repository admits without naming it; and it runs
 //! `hello-run` as an MCP Task through the SDK's in-process mesh, whose Veoveo Result
 //! completes it and whose execution is recorded as the Task caller's. The n8n program is
-//! `VEOVEO_N8N_PROGRAM`, or `n8n` on `PATH`; the test also needs the PostgreSQL 18 server
+//! `VEOVEO_N8N_PROGRAM`, or `n8n` on `PATH`; the test also needs the PostgreSQL 19 server
 //! programs on `PATH` and port 5678 on loopback. n8n reaches the server's loopback
 //! listener at `VEOVEO_N8N_TEST_LOOPBACK_HOST`, `127.0.0.1` unless n8n runs where the
 //! test's loopback is another host's, as in a container.

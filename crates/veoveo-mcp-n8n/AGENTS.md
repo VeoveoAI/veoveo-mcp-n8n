@@ -40,7 +40,7 @@ through the server and the Hub. A runner serves no editor.
 
 ## Build And Test
 
-- `cargo test -p veoveo-mcp-n8n` with PostgreSQL 18 and the pinned n8n on `PATH`, as the
+- `cargo test -p veoveo-mcp-n8n` with PostgreSQL 19 and the pinned n8n on `PATH`, as the
   `dev` image provides them. `tests/workflows.rs` starts the n8n program that
   `VEOVEO_N8N_PROGRAM` names, or `n8n`, and needs port 5678 on loopback; n8n reaches the
   test's loopback listener at `VEOVEO_N8N_TEST_LOOPBACK_HOST`, `127.0.0.1` unless n8n runs
